@@ -1,0 +1,64 @@
+# =====================================================================
+#  Réglages de l'agent « Directeur de mémoire »
+# =====================================================================
+#  Ouvrez ce fichier avec le Bloc-notes, modifiez les valeurs, enregistrez.
+#  IMPORTANT : gardez les apostrophes simples ' ' autour des chemins.
+# =====================================================================
+
+# --- 1. Vos dossiers --------------------------------------------------
+
+# Dossier « mémoire » de votre coffre Obsidian (vos notes .md).
+# L'agent le lit directement, sans faire de copie, et ne le modifie JAMAIS.
+dossier_notes: 'C:\Users\VotreNom\Documents\Obsidian\MonCoffre\Mémoire'
+
+# Dossier où l'agent écrit les fiches récapitulatives de séance.
+# Il est créé s'il n'existe pas. Il doit se trouver EN DEHORS du dossier des notes.
+dossier_recaps: 'C:\Users\VotreNom\Documents\Obsidian\MonCoffre\Recaps'
+
+# Sujet de votre mémoire, en une phrase (facultatif mais utile).
+sujet_memoire: ''
+
+# --- 2. Le « cerveau » (Ollama) ---------------------------------------
+
+ollama:
+  adresse: 'http://127.0.0.1:11434'
+  # Modèle téléchargé automatiquement au premier lancement.
+  #   qwen2.5:7b        -> bon choix pour la plupart des PC (environ 5 Go)
+  #   mistral-small3.2  -> meilleur, pour PC puissant (carte graphique 24 Go)
+  modele: 'qwen2.5:7b'
+  # Mémoire de travail du modèle (en « tokens »). 16384 convient très bien.
+  taille_contexte: 16384
+
+# --- 3. La voix (Phonon de Gradium) ----------------------------------
+
+voix:
+  modele: 'hf://gradium/phonon-40m-fr'
+  # Nom de la voix. Laissez vide pour la voix par défaut.
+  # La liste des voix disponibles s'affiche dans la fenêtre au démarrage.
+  nom: ''
+  # Vitesse : 0 = normal, -0.2 = plus rapide, 0.2 = plus lent.
+  vitesse: 0.0
+
+# --- 4. L'écoute (Kyutai STT) -----------------------------------------
+
+transcription:
+  modele: 'kyutai/stt-1b-en_fr-candle'
+
+# --- 5. Divers --------------------------------------------------------
+
+# Jeton Hugging Face (obligatoire au premier lancement pour télécharger la voix).
+# Voir le README, étape 3.
+jeton_huggingface: ''
+
+# Processeur utilisé pour l'écoute et la voix : 'auto', 'cuda' (carte NVIDIA) ou 'cpu'.
+materiel: 'auto'
+
+conversation:
+  # Secondes de silence avant que l'agent ne vous relance.
+  silence_avant_relance_s: 15
+  # Si toutes vos notes font moins que ce nombre de caractères,
+  # l'agent les connaît en entier dès le début. Sinon, il les consulte au besoin.
+  notes_en_entier_si_moins_de: 20000
+
+# Port de la page web (http://localhost:8000).
+port: 8000
