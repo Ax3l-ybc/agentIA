@@ -373,7 +373,6 @@ def creer_app(reglages: Reglages, moteur_ecoute=None, moteur_voix=None, modele_l
         n = len(agent.coffre.lister())
         log.info("%s note(s) trouvée(s) dans %s (lecture seule).", n, reglages.dossier_notes)
         log.info("Les fiches iront dans %s.", reglages.dossier_recaps)
-        log.info("=== Prêt ! Ouvrez http://localhost:%s dans votre navigateur. ===", reglages.port)
         app.state.pret = True
         yield
 

@@ -86,7 +86,7 @@ Enregistrez le fichier (**Ctrl + S**) et fermez le Bloc-notes.
 2. **Au premier lancement**, l'agent télécharge son cerveau, son écoute et sa voix
    (environ 8 Go). Cela peut prendre un moment. Les lancements suivants sont rapides.
 3. Quand la fenêtre affiche **« Prêt ! »**, la page de l'agent s'ouvre dans votre navigateur
-   (adresse : <http://localhost:8000>).
+   L'adresse est affichée dans la fenêtre, en général <http://127.0.0.1:8000>.
 4. Cliquez sur le **bouton micro** et **autorisez l'accès au micro** si le navigateur le demande.
 5. Le directeur vous salue et vous pose une première question. **Répondez simplement à voix haute.**
    Vous pouvez lui couper la parole.
@@ -117,7 +117,8 @@ Pour quitter complètement, **fermez la fenêtre noire**.
 | L'agent ne vous entend pas | Autorisez le micro dans le navigateur (icône à gauche de l'adresse) et vérifiez le micro choisi dans Windows. |
 | L'agent se coupe ou se répond à lui-même | Utilisez un casque, ou laissez la case **Anti-écho** cochée. |
 | Les réponses sont lentes | Si la fenêtre noire affiche « aucune carte graphique NVIDIA utilisable », c'est l'écoute qui est trop lente : il faut une carte NVIDIA. Sinon, essayez un cerveau plus léger dans `config.yaml` : `modele: 'qwen2.5:3b'`. |
-| La page ne s'ouvre pas toute seule | Ouvrez <http://localhost:8000> dans votre navigateur. |
+| La page ne s'ouvre pas toute seule | Copiez dans Chrome ou Edge l'adresse affichée sur la ligne « Prêt ! » (en général <http://127.0.0.1:8000>), sans fermer la fenêtre noire. |
+| « Le port 8000 est déjà pris » | Rien à faire : l'agent prend un autre port. Fermez quand même les anciennes fenêtres noires de l'agent. |
 
 ## Réglages utiles (dans `config.yaml`)
 

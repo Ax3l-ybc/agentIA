@@ -8,6 +8,7 @@ import socket
 import sys
 import threading
 import time
+import urllib.request
 import webbrowser
 
 
@@ -106,13 +107,23 @@ def main() -> int:
 
     app = creer_app(reglages, moteur_ecoute=ecoute, moteur_voix=voix, modele_llm=modele)
 
+    adresse = f"http://127.0.0.1:{reglages.port}"
+
     def ouvrir_navigateur():
-        for _ in range(60):
+        # On attend que la page réponde vraiment avant d'ouvrir le navigateur.
+        for _ in range(120):
             time.sleep(0.5)
-            if app.state.pret:
-                time.sleep(0.5)
-                webbrowser.open(f"http://localhost:{reglages.port}")
-                return
+            try:
+                with urllib.request.urlopen(adresse + "/api/infos", timeout=2):
+                    pass
+            except OSError:
+                continue
+            log.info("=== Prêt ! La page s'ouvre : %s ===", adresse)
+            log.info("Si elle ne s'ouvre pas, copiez cette adresse dans Chrome ou Edge.")
+            if not webbrowser.open(adresse):
+                log.warning("Impossible d'ouvrir le navigateur tout seul : ouvrez %s", adresse)
+            return
+        log.error("La page ne répond pas. Essayez d'ouvrir %s dans votre navigateur.", adresse)
 
     threading.Thread(target=ouvrir_navigateur, daemon=True).start()
     uvicorn.run(app, host="127.0.0.1", port=reglages.port, log_level="warning")
