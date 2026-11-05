@@ -108,6 +108,17 @@ def test_reglages(tmp_path, coffre_test):
         reglages.charger(fichier)
 
 
+def test_reglages_apostrophe_dans_le_texte(tmp_path, coffre_test):
+    notes, recaps = coffre_test
+    fichier = tmp_path / "config.yaml"
+    fichier.write_text(
+        f"dossier_notes: '{notes}'\ndossier_recaps: '{recaps}'\n"
+        "sujet_memoire: 'Service d'appui à la pédagogie'   # commentaire\n",
+        encoding="utf-8",
+    )
+    assert reglages.charger(fichier).sujet_memoire == "Service d'appui à la pédagogie"
+
+
 # ---------------------------------------------------------------------------
 # Audio et découpage du texte
 # ---------------------------------------------------------------------------

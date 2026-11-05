@@ -16,6 +16,7 @@ dossier_notes: 'C:\Users\VotreNom\Documents\Obsidian\MonCoffre\Mémoire'
 dossier_recaps: 'C:\Users\VotreNom\Documents\Obsidian\MonCoffre\Recaps'
 
 # Sujet de votre mémoire, en une phrase (facultatif mais utile).
+# Une apostrophe dans le texte (« d'appui ») ne pose pas de problème.
 sujet_memoire: ''
 
 # --- 2. Le « cerveau » (Ollama) ---------------------------------------

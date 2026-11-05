@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import dataclasses
 import os
+import re
 import pathlib
 
 import yaml
@@ -47,16 +48,38 @@ def est_dans(enfant: pathlib.Path, parent: pathlib.Path) -> bool:
     return enfant == parent or parent in enfant.parents
 
 
+_LIGNE_APOSTROPHES = re.compile(r"^(\s*[\w-]+:\s*)'(.*)'(\s*(?:#.*)?)$")
+
+
+def reparer_apostrophes(texte: str) -> str:
+    """Double les apostrophes à l'intérieur des valeurs écrites 'comme ceci'."""
+    lignes = []
+    for ligne in texte.splitlines():
+        m = _LIGNE_APOSTROPHES.match(ligne)
+        if m and "'" in m.group(2):
+            interieur = m.group(2).replace("''", "'").replace("'", "''")
+            ligne = f"{m.group(1)}'{interieur}'{m.group(3)}"
+        lignes.append(ligne)
+    return "\n".join(lignes)
+
+
 def charger(fichier: pathlib.Path = FICHIER_CONFIG) -> Reglages:
     if not fichier.exists():
         raise ErreurReglages(f"Fichier de réglages introuvable : {fichier}")
+    texte = fichier.read_text(encoding="utf-8-sig")
     try:
-        brut = yaml.safe_load(fichier.read_text(encoding="utf-8-sig")) or {}
-    except yaml.YAMLError as exc:
-        raise ErreurReglages(
-            "config.yaml est mal écrit. Vérifiez les apostrophes ' ' autour des "
-            f"chemins et l'alignement des lignes.\nDétail : {exc}"
-        ) from exc
+        brut = yaml.safe_load(texte) or {}
+    except yaml.YAMLError:
+        # Cas fréquent : une apostrophe dans le texte (« d'appui ») ferme trop tôt
+        # la valeur écrite entre apostrophes. On la répare et on réessaie.
+        try:
+            brut = yaml.safe_load(reparer_apostrophes(texte)) or {}
+        except yaml.YAMLError as exc:
+            raise ErreurReglages(
+                "config.yaml est mal écrit. Vérifiez les apostrophes ' ' autour des "
+                "chemins et l'alignement des lignes (gardez les espaces en début de ligne).\n"
+                f"Détail : {exc}"
+            ) from exc
 
     ollama = brut.get("ollama") or {}
     voix = brut.get("voix") or {}
