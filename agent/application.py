@@ -8,6 +8,7 @@ import datetime
 import json
 import logging
 import pathlib
+import re
 
 import fastapi
 import gradbot
@@ -91,7 +92,8 @@ class Seance:
         if not texte:
             return
         if self.echanges and self.echanges[-1][0] == role:
-            self.echanges[-1][1] += " " + texte
+            texte = self.echanges[-1][1] + " " + texte
+            self.echanges[-1][1] = re.sub(r"\s+([,.…])", r"\1", texte)
         else:
             self.echanges.append([role, texte])
 

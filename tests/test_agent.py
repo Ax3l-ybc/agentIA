@@ -134,6 +134,15 @@ def test_assembleur_mots():
     assert [m["text"] for m in sortie] == ["Bonjour", "à"]
 
 
+def test_seance_ponctuation():
+    from agent.application import Seance
+
+    s = Seance()
+    for mot in ["Pour", "cela", ",", "il", "faut"]:
+        s.ajouter("etudiant", mot)
+    assert s.transcription() == "Étudiant : Pour cela, il faut"
+
+
 # ---------------------------------------------------------------------------
 # Bout en bout : Gradbot + serveur vocal local + faux LLM
 # ---------------------------------------------------------------------------

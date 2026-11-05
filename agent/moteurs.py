@@ -65,6 +65,11 @@ class MoteurEcoute:
         self.a_des_tetes_vad = len(lm.extra_heads) > 0
         if not self.a_des_tetes_vad:
             log.warning("Ce modèle STT n'a pas de détection de fin de tour : mode dégradé.")
+        if self.materiel == "cpu":
+            log.warning(
+                "ATTENTION : aucune carte graphique NVIDIA utilisable. L'écoute tourne sur le "
+                "processeur et sera probablement trop lente pour une conversation fluide."
+            )
         log.info("Écoute prête.")
 
     def reinitialiser(self) -> None:

@@ -17,8 +17,9 @@ Quand vous le lui demandez, il écrit une **fiche récapitulative de la séance*
 - Un PC sous **Windows 10 ou 11**, avec **16 Go de mémoire vive** (RAM) au minimum.
 - Environ **15 Go d'espace libre** sur le disque.
 - Un **micro**. Un **casque** est conseillé : sinon l'agent risque de s'entendre parler.
-- Une **carte graphique NVIDIA**, vivement recommandée. Sans elle, l'agent fonctionne
-  mais répond plus lentement.
+- Une **carte graphique NVIDIA** (GeForce RTX avec au moins 8 Go de mémoire, par exemple).
+  **Elle est indispensable pour une conversation fluide** : sans elle, l'agent démarre, mais il
+  met trop de temps à comprendre ce que vous dites.
 - Une connexion internet **pour l'installation et le premier lancement seulement**.
 
 ---
@@ -115,7 +116,7 @@ Pour quitter complètement, **fermez la fenêtre noire**.
 | « Ollama ne répond pas » | Lancez **Ollama** depuis le menu Démarrer, puis relancez `lancer.bat`. |
 | L'agent ne vous entend pas | Autorisez le micro dans le navigateur (icône à gauche de l'adresse) et vérifiez le micro choisi dans Windows. |
 | L'agent se coupe ou se répond à lui-même | Utilisez un casque, ou laissez la case **Anti-écho** cochée. |
-| Les réponses sont lentes | Sans carte NVIDIA, c'est normal. Dans `config.yaml`, vous pouvez essayer un modèle plus léger : `modele: 'qwen2.5:3b'`. |
+| Les réponses sont lentes | Si la fenêtre noire affiche « aucune carte graphique NVIDIA utilisable », c'est l'écoute qui est trop lente : il faut une carte NVIDIA. Sinon, essayez un cerveau plus léger dans `config.yaml` : `modele: 'qwen2.5:3b'`. |
 | La page ne s'ouvre pas toute seule | Ouvrez <http://localhost:8000> dans votre navigateur. |
 
 ## Réglages utiles (dans `config.yaml`)
