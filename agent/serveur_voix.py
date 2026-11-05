@@ -149,30 +149,61 @@ async def ecoute_ws(ws: fastapi.WebSocket):
             }
         )
 
+    # La lecture du WebSocket tourne à part : même si le modèle prend du retard
+    # (processeur lent), les messages sont lus en continu et la connexion reste
+    # vivante. L'audio en attente est mis en file et traité dès que possible.
+    file_audio: asyncio.Queue = asyncio.Queue()
+    en_attente = [0]  # échantillons reçus mais pas encore traités
+
+    async def lire():
+        try:
+            while True:
+                message = await ws.receive()
+                if message.get("type") == "websocket.disconnect":
+                    break
+                if message.get("text") is None:
+                    continue
+                donnees = json.loads(message["text"])
+                if donnees.get("type") == "audio":
+                    pcm = moteurs.pcm16_vers_float(base64.b64decode(donnees["audio"]))
+                    en_attente[0] += len(pcm)
+                    file_audio.put_nowait(pcm)
+                elif donnees.get("type") == "end_of_stream":
+                    file_audio.put_nowait("fin")
+                    return
+        except (fastapi.WebSocketDisconnect, RuntimeError):
+            pass
+        file_audio.put_nowait(None)  # connexion fermée
+
+    lecteur = asyncio.create_task(lire())
+    retard_signale = 0.0
     try:
         while ma_generation == _generation_ecoute:
-            message = await ws.receive()
-            if message.get("type") == "websocket.disconnect":
+            element = await file_audio.get()
+            if element is None:
                 break
-            if message.get("text") is None:
-                continue
-            donnees = json.loads(message["text"])
-            if donnees.get("type") == "audio":
-                pcm = moteurs.pcm16_vers_float(base64.b64decode(donnees["audio"]))
-                tampon = np.concatenate([tampon, pcm])
-                while len(tampon) >= moteurs.TRAME_ENTREE and ma_generation == _generation_ecoute:
-                    trame, tampon = tampon[: moteurs.TRAME_ENTREE], tampon[moteurs.TRAME_ENTREE :]
-                    await traiter(trame)
-            elif donnees.get("type") == "end_of_stream":
+            if isinstance(element, str):  # fin du flux demandée par Gradbot
                 for m in assembleur.terminer():
                     await ws.send_json(m)
                 await ws.send_json({"type": "end_of_stream"})
                 break
-    except fastapi.WebSocketDisconnect:
+            tampon = np.concatenate([tampon, element])
+            while len(tampon) >= moteurs.TRAME_ENTREE and ma_generation == _generation_ecoute:
+                trame, tampon = tampon[: moteurs.TRAME_ENTREE], tampon[moteurs.TRAME_ENTREE :]
+                en_attente[0] -= moteurs.TRAME_ENTREE
+                await traiter(trame)
+            retard = en_attente[0] / moteurs.TAUX_ENTREE
+            if retard >= retard_signale + 10:
+                log.warning("L'écoute a %.0f s de retard sur votre voix (processeur trop lent).", retard)
+                retard_signale = retard
+            elif retard < 2:
+                retard_signale = 0.0
+    except (fastapi.WebSocketDisconnect, RuntimeError):
         pass
     except Exception:
         log.exception("Erreur dans la session d'écoute")
     finally:
+        lecteur.cancel()
         try:
             await ws.close()
         except Exception:

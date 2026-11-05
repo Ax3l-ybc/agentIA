@@ -126,7 +126,16 @@ def main() -> int:
         log.error("La page ne répond pas. Essayez d'ouvrir %s dans votre navigateur.", adresse)
 
     threading.Thread(target=ouvrir_navigateur, daemon=True).start()
-    uvicorn.run(app, host="127.0.0.1", port=reglages.port, log_level="warning")
+    # Tout est local : pas besoin des pings de contrôle des WebSockets, qui
+    # coupaient la connexion quand le modèle prenait du retard.
+    uvicorn.run(
+        app,
+        host="127.0.0.1",
+        port=reglages.port,
+        log_level="warning",
+        ws_ping_interval=None,
+        ws_ping_timeout=None,
+    )
     return 0
 
 
