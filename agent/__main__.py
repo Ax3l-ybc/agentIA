@@ -4,10 +4,23 @@ from __future__ import annotations
 
 import logging
 import os
+import socket
 import sys
 import threading
 import time
 import webbrowser
+
+
+def premier_port_libre(depart: int, essais: int = 20) -> int | None:
+    """Premier port libre à partir de `depart` sur 127.0.0.1."""
+    for port in range(depart, depart + essais):
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            try:
+                s.bind(("127.0.0.1", port))
+                return port
+            except OSError:
+                continue
+    return None
 
 
 def main() -> int:
@@ -29,6 +42,23 @@ def main() -> int:
         return 1
 
     log.info("Réglages lus. Notes : %s", reglages.dossier_notes)
+    port = premier_port_libre(reglages.port)
+    if port is None:
+        log.error(
+            "PROBLÈME : les ports %s à %s sont tous occupés. Fermez les autres fenêtres "
+            "« Directeur de mémoire » ou redémarrez l'ordinateur.",
+            reglages.port,
+            reglages.port + 19,
+        )
+        return 1
+    if port != reglages.port:
+        log.info(
+            "Le port %s est déjà pris (l'agent est peut-être déjà ouvert dans une autre "
+            "fenêtre) : utilisation du port %s.",
+            reglages.port,
+            port,
+        )
+        reglages.port = port
     if reglages.jeton_hf:
         os.environ["HF_TOKEN"] = reglages.jeton_hf
     else:

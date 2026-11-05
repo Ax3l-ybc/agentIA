@@ -352,3 +352,14 @@ def test_ollama_preparer_affiche_la_progression(caplog):
     assert nom == ollama.NOM_MODELE_AGENT
     assert cree["from"] == "qwen2.5:7b" and cree["parameters"]["num_ctx"] == 16384
     assert "100 %" in caplog.text and "5.0 Go" in caplog.text
+
+
+def test_premier_port_libre():
+    from agent.__main__ import premier_port_libre
+
+    with socket.socket() as occupe:
+        occupe.bind(("127.0.0.1", 0))
+        occupe.listen()
+        pris = occupe.getsockname()[1]
+        libre = premier_port_libre(pris)
+        assert libre is not None and libre != pris
