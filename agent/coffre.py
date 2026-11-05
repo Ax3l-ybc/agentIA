@@ -144,13 +144,41 @@ class Coffre:
     def taille_totale(self) -> int:
         return sum(len(self.lire_texte(n)) for n in self.lister())
 
+    # ------------------------------------------------------- fiches de séance
+
+    def lister_fiches(self) -> list[pathlib.Path]:
+        """Fiches des séances précédentes, de la plus récente à la plus ancienne."""
+        if not self.recaps_dir.is_dir():
+            return []
+        fiches = [p for p in self.recaps_dir.glob("*.md") if p.is_file()]
+        # Les noms commencent par la date (AAAA-MM-JJ_...) ; à défaut, date de modification.
+        return sorted(fiches, key=lambda p: (p.name[:10], p.stat().st_mtime), reverse=True)
+
+    def fiches_recentes(self, nombre: int = 3, longueur_max: int = 5000) -> list[dict]:
+        resultat = []
+        for p in self.lister_fiches()[:nombre]:
+            texte = p.read_text(encoding="utf-8", errors="replace")
+            resultat.append({"nom": p.stem, "contenu": texte[:longueur_max]})
+        return resultat
+
+    def lire_fiche(self, nom: str) -> dict:
+        fiches = self.lister_fiches()
+        cible = simplifier(nom.strip().removesuffix(".md"))
+        for p in fiches:
+            if cible and (cible == simplifier(p.stem) or cible in simplifier(p.stem)):
+                return {"fiche": p.stem, "contenu": p.read_text(encoding="utf-8", errors="replace")[:LONGUEUR_MAX_NOTE]}
+        return {"erreur": f"Aucune fiche ne correspond à « {nom} ».", "fiches": [p.stem for p in fiches][:40]}
+
     # ----------------------------------------------------------------- écriture
 
-    def ecrire_recap(self, contenu: str, quand: datetime.datetime | None = None) -> pathlib.Path:
+    def ecrire_recap(
+        self, contenu: str, quand: datetime.datetime | None = None, nom_fichier: str | None = None
+    ) -> pathlib.Path:
         """Crée une NOUVELLE fiche dans le dossier des recaps. N'écrase jamais rien."""
         quand = quand or datetime.datetime.now()
         self.recaps_dir.mkdir(parents=True, exist_ok=True)
-        base = f"Recap {quand:%Y-%m-%d %Hh%M}"
+        base = pathlib.Path(nom_fichier).name.removesuffix(".md") if nom_fichier else f"Recap {quand:%Y-%m-%d %Hh%M}"
+        base = base.strip(" .") or f"Recap {quand:%Y-%m-%d %Hh%M}"
         for i in range(1, 1000):
             nom = base if i == 1 else f"{base} ({i})"
             cible = (self.recaps_dir / f"{nom}.md").resolve()

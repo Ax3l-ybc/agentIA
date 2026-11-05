@@ -200,7 +200,13 @@ def faux_ollama_app(journal: list):
     async def chat(req: fastapi.Request):
         corps = await req.json()
         journal.append(corps)
-        return {"message": {"role": "assistant", "content": "## En bref\nSéance de test."}}
+        date = __import__("datetime").date.today().isoformat()
+        texte = (
+            f"`{date}_fiche_cadrage-terrain.md`\n\n```markdown\n---\ndate: {date}\n"
+            "type: fiche-seance\nprojet: memoire\n---\n\n"
+            f"# Séance du {date} — cadrage du terrain\n\n## Objet de la séance\nTest.\n```\n"
+        )
+        return {"message": {"role": "assistant", "content": texte}}
 
     return app
 
@@ -305,8 +311,13 @@ def test_bout_en_bout(coffre_test):
     fiches = list(recaps.glob("*.md"))
     assert len(fiches) == 1
     contenu = fiches[0].read_text(encoding="utf-8")
-    assert "## En bref" in contenu and "type: recap-seance" in contenu
-    assert "Fais la fiche" in contenu  # transcription incluse
+    assert fiches[0].name.endswith("_fiche_cadrage-terrain.md")
+    assert contenu.startswith("---\ndate:") and "type: fiche-seance" in contenu
+    assert "```" not in contenu
+    # La fiche a été demandée avec le mode de conduite et la transcription.
+    demande_fiche = next(c for c in journal if "options" in c)
+    assert "MODE DE CONDUITE" in demande_fiche["messages"][0]["content"]
+    assert "Fais la fiche" in demande_fiche["messages"][1]["content"]
     # Les notes n'ont pas bougé d'un octet.
     assert empreinte(notes) == avant
 
@@ -446,3 +457,45 @@ def test_ecoute_phrase_conservee_si_redemarrage():
     sorties = [e.pas_mots(np.zeros(1920, np.float32)) for _ in range(15)]
     assert any(ms for ms, _ in sorties)
     assert transcrites[0] >= 2.8  # les 2 s d'avant le redémarrage sont incluses
+
+
+def test_extraire_fiche():
+    import datetime as dt
+
+    from agent import consignes
+
+    d = dt.date(2026, 11, 5)
+    nom, contenu = consignes.extraire_fiche(
+        "Nom : `2026-11-05_fiche_role-des-sap.md`\n```markdown\n---\ndate: 2026-11-05\n---\n# Séance\n```", d
+    )
+    assert nom == "2026-11-05_fiche_role-des-sap.md" and contenu == "---\ndate: 2026-11-05\n---\n# Séance\n"
+    nom, contenu = consignes.extraire_fiche("---\ndate: x\n---\n# Séance du 2026-11-05 — Rôle des IGP\n", d)
+    assert nom == "2026-11-05_fiche_role-des-igp.md" and contenu.startswith("---")
+
+
+def test_consignes_mode_et_fiches(coffre_test, tmp_path):
+    from agent import consignes
+
+    notes, recaps = coffre_test
+    c = coffre_mod.Coffre(notes, recaps)
+    recaps.mkdir(parents=True, exist_ok=True)
+    (recaps / "2026-10-01_fiche_ancienne.md").write_text("ancienne", encoding="utf-8")
+    (recaps / "2026-11-01_fiche_recente.md").write_text("questions ouvertes : rôle des IGP", encoding="utf-8")
+    assert [p.stem for p in c.lister_fiches()] == ["2026-11-01_fiche_recente", "2026-10-01_fiche_ancienne"]
+    assert "IGP" in c.lire_fiche("recente")["contenu"]
+    mode_fichier = tmp_path / "mode.md"
+    mode_fichier.write_text("# Rôle\nTu es mon directeur, autour d'un café.", encoding="utf-8")
+    texte = consignes.construire(
+        consignes.lire_mode(mode_fichier), "", c.index(), None, c.fiches_recentes(1),
+        [p.stem for p in c.lister_fiches()],
+    )
+    assert texte.index("autour d'un café") < texte.index("Adaptation à la conversation orale")
+    assert "rôle des IGP" in texte and "2026-10-01_fiche_ancienne" in texte
+    assert consignes.lire_mode(tmp_path / "absent.md") == consignes.MODE_PAR_DEFAUT.strip()
+
+
+def test_mode_de_conduite_du_projet_est_charge():
+    from agent import consignes, reglages as r
+
+    texte = consignes.lire_mode(r.RACINE / "mode_de_conduite.md")
+    assert "services d'appui à la pédagogie" in texte and "fiche-seance" in texte

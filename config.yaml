@@ -15,6 +15,10 @@ dossier_notes: 'C:\Users\VotreNom\Documents\Obsidian\MonCoffre\Mémoire'
 # Il est créé s'il n'existe pas. Il doit se trouver EN DEHORS du dossier des notes.
 dossier_recaps: 'C:\Users\VotreNom\Documents\Obsidian\MonCoffre\Recaps'
 
+# Fichier qui décrit le comportement de l'agent (son « mode de conduite »).
+# Modifiez-le avec le Bloc-notes : il est relu au début de chaque séance.
+mode_de_conduite: 'mode_de_conduite.md'
+
 # Sujet de votre mémoire, en une phrase (facultatif mais utile).
 # Une apostrophe dans le texte (« d'appui ») ne pose pas de problème.
 sujet_memoire: ''
@@ -24,9 +28,11 @@ sujet_memoire: ''
 ollama:
   adresse: 'http://127.0.0.1:11434'
   # Modèle téléchargé automatiquement au premier lancement.
-  #   qwen2.5:7b        -> bon choix pour la plupart des PC (environ 5 Go)
-  #   mistral-small3.2  -> meilleur, pour PC puissant (carte graphique 24 Go)
-  modele: 'qwen2.5:7b'
+  #   mistral-small3.2 -> Mistral Small 3.2 (24B, environ 15 Go). Très bon en français.
+  #                       Demande au moins 24 Go de mémoire vive (32 conseillés),
+  #                       et répond lentement sur un simple processeur.
+  #   qwen2.5:7b       -> plus léger (environ 5 Go), plus rapide, un peu moins fin.
+  modele: 'mistral-small3.2'
   # Mémoire de travail du modèle (en « tokens »). 16384 convient très bien.
   taille_contexte: 16384
 

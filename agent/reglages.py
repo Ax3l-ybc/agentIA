@@ -37,12 +37,21 @@ class Reglages:
     silence_relance_s: float = 15.0
     seuil_notes_entieres: int = 20000
     port: int = 8000
+    mode_de_conduite: pathlib.Path | None = None  # fichier du prompt de l'agent
 
 
 def _chemin(valeur: object, nom: str) -> pathlib.Path:
     if not isinstance(valeur, str) or not valeur.strip():
         raise ErreurReglages(f"Le réglage « {nom} » est vide dans config.yaml.")
     return pathlib.Path(os.path.expandvars(os.path.expanduser(valeur.strip())))
+
+
+def _chemin_mode(valeur: object) -> pathlib.Path:
+    """Fichier du mode de conduite ; un chemin relatif part du dossier de l'agent."""
+    if not isinstance(valeur, str) or not valeur.strip():
+        valeur = "mode_de_conduite.md"
+    chemin = pathlib.Path(os.path.expandvars(os.path.expanduser(valeur.strip())))
+    return chemin if chemin.is_absolute() else RACINE / chemin
 
 
 def est_dans(enfant: pathlib.Path, parent: pathlib.Path) -> bool:
@@ -114,6 +123,7 @@ def charger(fichier: pathlib.Path = FICHIER_CONFIG) -> Reglages:
             else Reglages.seuil_notes_entieres
         ),
         port=int(brut.get("port") or 8000),
+        mode_de_conduite=_chemin_mode(brut.get("mode_de_conduite")),
     )
     verifier_dossiers(r)
     return r

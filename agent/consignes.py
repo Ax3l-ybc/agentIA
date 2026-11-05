@@ -1,81 +1,133 @@
-"""Consignes données au modèle : le personnage du directeur de mémoire."""
+"""Consignes données au modèle.
+
+Le comportement de l'agent vient du fichier « mode de conduite » (mode_de_conduite.md),
+écrit par l'étudiant et relu au début de chaque séance. Ce module y ajoute seulement :
+- une courte adaptation à l'oral (l'agent parle, il n'écrit pas) ;
+- les fiches des séances précédentes et les notes, qui forment les « connaissances du projet ».
+"""
 
 from __future__ import annotations
 
+import datetime
 import json
+import pathlib
+import re
+import unicodedata
 
-PERSONNAGE = """
-Tu es le directeur de mémoire de l'étudiant qui te parle. Vous faites une séance de
-travail à l'oral, en français. Tu es exigeant, bienveillant mais sans complaisance,
-comme un bon universitaire.
+MODE_PAR_DEFAUT = """
+Tu joues le rôle de mon directeur de mémoire. Tu es bienveillant mais exigeant : tu poses
+plus de questions que tu ne donnes de réponses, une seule à la fois, et tu me dis franchement
+quand une idée ne tient pas. Tu t'appuies sur mes notes, en citant leur nom, et tu relèves
+les zones floues. N'invente jamais de référence. Tutoiement, réponses courtes.
+"""
 
-TA MISSION
-- Interroger l'étudiant sur son mémoire à partir de SES notes (fournies ci-dessous ou
-  consultables avec les outils). Pose UNE seule question à la fois, puis écoute.
-- Pointer précisément les zones floues : concepts mal définis, affirmations sans source,
-  problématique trop large, méthode imprécise, contradictions entre notes, plan déséquilibré,
-  passages qui décrivent sans analyser.
-- Relancer quand une réponse est vague : « Concrètement ? », « Quelle source ? »,
-  « En quoi est-ce que ça répond à ta problématique ? ».
-- Proposer de nouvelles questions de recherche ou des pistes à creuser quand c'est utile.
-- Cite le nom de la note dont tu parles (par exemple « dans ta note Méthodologie… »).
-
-STYLE (c'est une conversation orale)
-- Phrases courtes et naturelles. Deux ou trois phrases maximum par réponse.
-- Pas de listes, pas de titres, pas de symboles : tout est lu à voix haute.
-- Tutoie l'étudiant.
-
-RÈGLES STRICTES
-- N'invente jamais le contenu d'une note. Si tu ne l'as pas sous les yeux, lis-la avec
-  l'outil lire_note, ou cherche avec chercher_dans_notes.
-- Tu ne peux PAS modifier les notes de l'étudiant, et tu ne le proposes jamais.
-  Si on te le demande, explique que tu travailles en lecture seule.
-- Quand l'étudiant demande une fiche, un récapitulatif, un compte rendu ou un bilan de la
-  séance, appelle l'outil rediger_fiche_recap, puis dis-lui en une phrase que la fiche est
-  en cours de rédaction dans le dossier recaps.
-- Au tout début (message « [start] »), salue brièvement et pose directement une première
-  question exigeante tirée des notes.
+ADAPTATION_ORALE = """
+# Adaptation à la conversation orale (à appliquer en plus du mode de conduite)
+- La séance se fait à voix haute : tes réponses sont lues par une voix de synthèse.
+  Phrases courtes, pas de listes, pas de titres, pas de symboles, pas de Markdown.
+- Les « connaissances du projet » sont fournies plus bas : les fiches des séances
+  précédentes et mes notes. Pour une note qui n'est pas reproduite en entier, utilise
+  l'outil lire_note ; pour retrouver un passage, chercher_dans_notes ; pour une fiche plus
+  ancienne, lire_fiche.
+- Clôture : quand je dis « fiche », « slash fiche », qu'on termine, ou quand j'accepte ta
+  proposition de fiche, appelle l'outil rediger_fiche_recap. Ne dicte surtout pas la fiche
+  à voix haute : elle est rédigée selon le modèle du mode de conduite et enregistrée
+  automatiquement dans le dossier des fiches. Dis simplement, en une phrase, qu'elle est
+  en cours de rédaction.
+- Tu ne modifies jamais mes notes et tu ne le proposes pas : tu travailles en lecture seule.
+- Au tout début (message « [start] »), reprends le fil comme le demande le mode de conduite,
+  en deux ou trois phrases, puis pose une seule question.
 """
 
 
-def construire(sujet: str, index: list[dict], texte_complet: str | None) -> str:
-    morceaux = [PERSONNAGE.strip()]
+def lire_mode(fichier: pathlib.Path | None) -> str:
+    """Relit le mode de conduite (à chaque séance : une modification s'applique tout de suite)."""
+    if fichier and fichier.is_file():
+        texte = fichier.read_text(encoding="utf-8-sig").strip()
+        if texte:
+            return texte
+    return MODE_PAR_DEFAUT.strip()
+
+
+def construire(
+    mode: str,
+    sujet: str,
+    index: list[dict],
+    texte_complet: str | None,
+    fiches: list[dict],
+    noms_fiches: list[str],
+    aujourd_hui: datetime.date | None = None,
+) -> str:
+    aujourd_hui = aujourd_hui or datetime.date.today()
+    morceaux = [
+        "# MODE DE CONDUITE (à suivre pendant toute la séance)\n" + mode,
+        ADAPTATION_ORALE.strip(),
+        f"Nous sommes le {aujourd_hui:%Y-%m-%d}.",
+    ]
     if sujet:
         morceaux.append(f"SUJET DU MÉMOIRE : {sujet}")
+    if fiches:
+        bloc = "\n\n".join(f"=== FICHE : {f['nom']} ===\n{f['contenu']}" for f in fiches)
+        morceaux.append("FICHES DES SÉANCES LES PLUS RÉCENTES (de la plus récente à la plus ancienne) :\n" + bloc)
+        anciennes = [n for n in noms_fiches if n not in {f["nom"] for f in fiches}]
+        if anciennes:
+            morceaux.append("Fiches plus anciennes (outil lire_fiche) : " + ", ".join(anciennes[:30]))
+    else:
+        morceaux.append("Aucune fiche de séance précédente : c'est la première séance.")
     morceaux.append(
-        "LISTE DES NOTES DE L'ÉTUDIANT (avec leurs intertitres) :\n"
-        + json.dumps(index, ensure_ascii=False, indent=0)
+        "LISTE DE MES NOTES (avec leurs intertitres) :\n" + json.dumps(index, ensure_ascii=False, indent=0)
     )
     if texte_complet:
-        morceaux.append("CONTENU COMPLET DES NOTES :\n" + texte_complet)
+        morceaux.append("CONTENU COMPLET DE MES NOTES :\n" + texte_complet)
     else:
         morceaux.append(
-            "Les notes sont trop longues pour être fournies en entier : "
+            "Mes notes sont trop longues pour être fournies en entier : "
             "lis celles dont tu as besoin avec l'outil lire_note."
         )
     return "\n\n".join(morceaux)
 
 
+# ---------------------------------------------------------------------------
+# Fiche de clôture
+# ---------------------------------------------------------------------------
+
 CONSIGNE_FICHE = """
-Tu es directeur de mémoire. À partir de la transcription d'une séance de travail orale
-avec ton étudiant (et de ses notes), rédige une fiche récapitulative claire en Markdown,
-en français, pour Obsidian. Utilise exactement ces sections :
-
-## En bref
-(3 à 5 lignes : de quoi a-t-on parlé, où en est l'étudiant)
-
-## Points travaillés
-(liste à puces, en citant les notes concernées sous la forme [[Nom de la note]])
-
-## Zones floues à clarifier
-(liste à puces : ce qui reste imprécis, non sourcé ou contradictoire, et pourquoi)
-
-## Nouvelles questions à explorer
-(liste à puces de questions précises)
-
-## Prochaines étapes
-(liste de cases à cocher « - [ ] » concrètes)
-
-N'invente rien qui ne soit pas dans la transcription ou les notes. Ne mets pas de titre
-principal (il est ajouté automatiquement).
+La séance est terminée : produis maintenant la fiche récapitulative de clôture, en suivant
+exactement la section « Clôture de séance » et le modèle du mode de conduite ci-dessus.
+- Date du jour : {date}.
+- Première ligne : le nom de fichier, au format {date}_fiche_[sujet-court].md
+- Ensuite, le contenu de la fiche (en-tête YAML compris), dans un seul bloc de code Markdown.
+- Appuie-toi uniquement sur la transcription, mes notes et les fiches précédentes fournies.
+  N'invente rien. La transcription vient d'une reconnaissance vocale : corrige les mots
+  manifestement mal reconnus.
 """
+
+_NOM_FICHIER = re.compile(r"(\d{4}-\d{2}-\d{2}_fiche_[^\s`*/\\:\"<>|?]+?\.md)")
+_BLOC_CODE = re.compile(r"```(?:markdown|md)?\s*\n(.*?)\n```", re.S)
+
+
+def slug(texte: str) -> str:
+    texte = unicodedata.normalize("NFKD", texte)
+    texte = "".join(c for c in texte if not unicodedata.combining(c)).lower()
+    texte = re.sub(r"[^a-z0-9]+", "-", texte).strip("-")
+    return texte[:50] or "seance"
+
+
+def extraire_fiche(reponse: str, date: datetime.date) -> tuple[str, str]:
+    """Sépare le nom de fichier et le contenu de la fiche produite par le modèle."""
+    contenu = reponse.strip()
+    blocs = _BLOC_CODE.findall(contenu)
+    if blocs:
+        contenu = max(blocs, key=len).strip()
+    else:  # pas de bloc de code : on retire une éventuelle ligne de nom de fichier
+        contenu = re.sub(r"^\W*" + _NOM_FICHIER.pattern + r"\W*\n", "", contenu).strip()
+        contenu = contenu.removeprefix("```markdown").removeprefix("```").removesuffix("```").strip()
+    nom = None
+    m = _NOM_FICHIER.search(reponse)
+    if m:
+        nom = m.group(1)
+    else:
+        titre = re.search(r"^#\s+Séance du \S+\s+[—–-]\s*(.+)$", contenu, re.M)
+        nom = f"{date:%Y-%m-%d}_fiche_{slug(titre.group(1) if titre else 'seance')}.md"
+    nom = re.sub(r'[<>:"/\\|?*\n]', "-", nom)
+    return nom, contenu + "\n"

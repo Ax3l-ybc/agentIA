@@ -14,8 +14,8 @@ Quand vous le lui demandez, il écrit une **fiche récapitulative de la séance*
 
 ## Ce qu'il vous faut
 
-- Un PC sous **Windows 10 ou 11**, avec **16 Go de mémoire vive** (RAM) au minimum.
-- Environ **15 Go d'espace libre** sur le disque.
+- Un PC sous **Windows 10 ou 11**, avec **24 Go de mémoire vive** (RAM) au minimum pour Mistral Small (16 Go suffisent avec le modèle plus léger `qwen2.5:7b`).
+- Environ **30 Go d'espace libre** sur le disque.
 - Un **micro**. Un **casque** est conseillé : sinon l'agent risque de s'entendre parler.
 - Une **carte graphique NVIDIA** (GeForce RTX avec au moins 8 Go de mémoire, par exemple)
   pour la meilleure expérience : l'agent vous écoute alors en continu avec Kyutai STT.
@@ -85,7 +85,7 @@ Enregistrez le fichier (**Ctrl + S**) et fermez le Bloc-notes.
 1. **Double-cliquez sur `lancer.bat`.** Une fenêtre noire s'ouvre : laissez-la ouverte
    pendant toute la séance.
 2. **Au premier lancement**, l'agent télécharge son cerveau, son écoute et sa voix
-   (environ 8 Go). Cela peut prendre un moment. Les lancements suivants sont rapides.
+   (environ 18 Go). Cela peut prendre un moment. Les lancements suivants sont rapides.
 3. Quand la fenêtre affiche **« Prêt ! »**, la page de l'agent s'ouvre dans votre navigateur
    L'adresse est affichée dans la fenêtre, en général <http://127.0.0.1:8000>.
 4. Cliquez sur le **bouton micro** et **autorisez l'accès au micro** si le navigateur le demande.
@@ -94,11 +94,18 @@ Enregistrez le fichier (**Ctrl + S**) et fermez le Bloc-notes.
 
 ### Obtenir la fiche de séance
 
-Dites par exemple : **« Fais-moi la fiche de la séance »**, ou cliquez sur le bouton
-**Rédiger la fiche de séance**. Après quelques secondes, un fichier nommé par exemple
-`Recap 2026-11-04 15h30.md` apparaît dans votre dossier de recaps. La fiche contient un résumé,
-les points travaillés, les zones floues, les nouvelles questions, les prochaines étapes et
-la transcription de la séance.
+Dites par exemple **« slash fiche »**, **« fais-moi la fiche »** ou **« on termine »**, ou cliquez
+sur le bouton **Rédiger la fiche de séance**. La fiche suit le modèle de votre mode de conduite
+(voir ci-dessous). Elle est enregistrée dans votre dossier de fiches sous un nom comme
+`2026-11-05_fiche_role-des-sap.md`. Au début de la séance suivante, l'agent relit les fiches les
+plus récentes pour reprendre le fil.
+
+### Changer le comportement de l'agent : le « mode de conduite »
+
+Le fichier **`mode_de_conduite.md`** décrit comment l'agent se comporte : son rôle, son ton,
+ce que vous attendez de lui, ses règles et le modèle de la fiche. Ouvrez-le avec le Bloc-notes,
+modifiez-le comme vous voulez et enregistrez. Il est relu **au début de chaque séance** : inutile
+de relancer l'agent, cliquez simplement de nouveau sur le micro.
 
 ### Arrêter
 
@@ -130,8 +137,9 @@ Pour quitter complètement, **fermez la fenêtre noire**.
   Voix masculines : Arnaud (grave, direct), Lucien (posé), Augustin, Jules, Baptiste, Marius.
   La voix est téléchargée (quelques Ko) au lancement suivant.
 - **`voix > vitesse`** : `-0.2` pour parler plus vite, `0.2` pour parler plus lentement.
-- **`ollama > modele`** : le cerveau. `qwen2.5:7b` convient à la plupart des PC.
-  `mistral-small3.2` donne de meilleures réponses, mais demande un PC très puissant.
+- **`ollama > modele`** : le cerveau. Par défaut `mistral-small3.2` (Mistral Small 3.2, environ
+  15 Go, très bon en français). Il demande au moins 24 Go de mémoire vive (32 conseillés) et
+  répond lentement sans carte graphique. `qwen2.5:7b` est plus léger et plus rapide.
 - **`conversation > silence_avant_relance_s`** : le nombre de secondes de silence avant que l'agent vous relance.
 
 ---
@@ -165,11 +173,12 @@ Organisation des fichiers :
 
 ```
 config.yaml           vos réglages
+mode_de_conduite.md   le comportement de l'agent (votre prompt)
 installer.bat         installation
 lancer.bat            lancement
 agent/
   application.py      la séance vocale, les outils de l'agent et les fiches
-  consignes.py        le personnage du directeur de mémoire
+  consignes.py        le mode de conduite, l'adaptation à l'oral et la fiche
   coffre.py           la lecture des notes (lecture seule) et l'écriture des fiches
   serveur_voix.py     l'écoute et la voix en local (protocole Gradium)
   moteurs.py          Kyutai STT, Whisper et Phonon

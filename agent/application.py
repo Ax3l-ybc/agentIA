@@ -55,9 +55,21 @@ OUTILS = [
         ),
     ),
     gradbot.ToolDef(
+        "lire_fiche",
+        "Lit une fiche de séance précédente (par sa date ou son sujet).",
+        json.dumps(
+            {
+                "type": "object",
+                "properties": {"nom": {"type": "string", "description": "Date ou sujet de la fiche"}},
+                "required": ["nom"],
+            }
+        ),
+    ),
+    gradbot.ToolDef(
         "rediger_fiche_recap",
-        "Rédige et enregistre la fiche récapitulative de la séance dans le dossier recaps. "
-        "À utiliser uniquement quand l'étudiant le demande.",
+        "Rédige et enregistre la fiche de clôture de la séance (selon le modèle du mode de "
+        "conduite) dans le dossier des fiches. À utiliser quand l'étudiant demande la fiche "
+        "ou dit qu'on termine.",
         json.dumps(
             {
                 "type": "object",
@@ -125,13 +137,25 @@ class Agent:
 
     # ----------------------------------------------------------- configuration
 
+    def mode_de_conduite(self) -> str:
+        from .reglages import RACINE
+
+        return consignes.lire_mode(self.r.mode_de_conduite or RACINE / "mode_de_conduite.md")
+
     def config_seance(self) -> gradbot.SessionConfig:
         index = self.coffre.index()
         texte = None
         if self.coffre.taille_totale() <= self.r.seuil_notes_entieres:
             texte = self.coffre.tout_le_texte()
         return gradbot.SessionConfig(
-            instructions=consignes.construire(self.r.sujet_memoire, index, texte),
+            instructions=consignes.construire(
+                self.mode_de_conduite(),
+                self.r.sujet_memoire,
+                index,
+                texte,
+                self.coffre.fiches_recentes(2, 4000),
+                [p.stem for p in self.coffre.lister_fiches()],
+            ),
             language=gradbot.Lang.Fr,
             tools=OUTILS,
             assistant_speaks_first=True,
@@ -151,38 +175,34 @@ class Agent:
                 f"=== NOTE : {nom} ===\n{self.coffre.lire(nom, 4000).get('contenu', '')}"
                 for nom in sorted(seance.notes_lues)
             )
+        fiches = "\n\n".join(
+            f"=== FICHE : {f['nom']} ===\n{f['contenu']}" for f in self.coffre.fiches_recentes(3)
+        )
+        aujourd_hui = datetime.date.today()
         demande = (
-            f"SUJET DU MÉMOIRE : {self.r.sujet_memoire or 'non précisé'}\n\n"
-            f"NOTES CONSULTÉES :\n{notes[:24000] or '(aucune)'}\n\n"
-            f"TRANSCRIPTION DE LA SÉANCE :\n{seance.transcription()[-24000:]}\n"
+            f"FICHES DES SÉANCES PRÉCÉDENTES :\n{fiches or '(aucune : première séance)'}\n\n"
+            f"MES NOTES :\n{notes[:24000] or '(aucune consultée)'}\n\n"
+            f"TRANSCRIPTION DE LA SÉANCE D'AUJOURD'HUI :\n{seance.transcription()[-24000:]}\n"
         )
         if precisions:
-            demande += f"\nPRÉCISIONS DE L'ÉTUDIANT POUR LA FICHE : {precisions}\n"
-        corps = await asyncio.to_thread(
+            demande += f"\nPRÉCISIONS POUR LA FICHE : {precisions}\n"
+        systeme = (
+            "# MODE DE CONDUITE\n"
+            + self.mode_de_conduite()
+            + "\n\n"
+            + consignes.CONSIGNE_FICHE.format(date=f"{aujourd_hui:%Y-%m-%d}")
+        )
+        reponse = await asyncio.to_thread(
             ollama.discuter,
             self.r.ollama_adresse,
             self.modele_llm,
-            [
-                {"role": "system", "content": consignes.CONSIGNE_FICHE},
-                {"role": "user", "content": demande},
-            ],
+            [{"role": "system", "content": systeme}, {"role": "user", "content": demande}],
             self.r.ollama_contexte,
         )
-        maintenant = datetime.datetime.now()
-        liens = ", ".join(f'"[[{n}]]"' for n in sorted(seance.notes_lues))
-        contenu = (
-            "---\n"
-            "type: recap-seance\n"
-            f"date: {maintenant:%Y-%m-%d %H:%M}\n"
-            f"notes_consultees: [{liens}]\n"
-            "---\n\n"
-            f"# Séance du {date_en_francais(seance.debut)}\n\n"
-            f"{corps}\n\n"
-            "---\n\n"
-            "<details><summary>Transcription de la séance</summary>\n\n"
-            f"{seance.transcription()}\n\n</details>\n"
+        nom, contenu = consignes.extraire_fiche(reponse, aujourd_hui)
+        chemin = await asyncio.to_thread(
+            self.coffre.ecrire_recap, contenu, datetime.datetime.now(), nom
         )
-        chemin = await asyncio.to_thread(self.coffre.ecrire_recap, contenu, maintenant)
         log.info("Fiche enregistrée : %s", chemin)
         return chemin
 
@@ -217,6 +237,9 @@ class Agent:
             await outil.send_json(resultat)
         elif nom == "chercher_dans_notes":
             resultat = await asyncio.to_thread(self.coffre.chercher, str(args.get("requete", "")))
+            await outil.send_json(resultat)
+        elif nom == "lire_fiche":
+            resultat = await asyncio.to_thread(self.coffre.lire_fiche, str(args.get("nom", "")))
             await outil.send_json(resultat)
         elif nom == "rediger_fiche_recap":
             if not seance.etudiant_a_parle():
