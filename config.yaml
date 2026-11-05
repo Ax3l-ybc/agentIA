@@ -42,10 +42,20 @@ voix:
   # Vitesse : 0 = normal, -0.2 = plus rapide, 0.2 = plus lent.
   vitesse: 0.0
 
-# --- 4. L'écoute (Kyutai STT) -----------------------------------------
+# --- 4. L'écoute (Kyutai STT ou Whisper) ------------------------------
 
 transcription:
+  # Moteur d'écoute :
+  #   'auto'    -> Kyutai si l'ordinateur a une carte NVIDIA, sinon Whisper
+  #   'kyutai'  -> transcription en continu, très réactive (carte NVIDIA indispensable)
+  #   'whisper' -> fonctionne sur tous les PC ; comprend chaque phrase après une courte pause
+  moteur: 'auto'
   modele: 'kyutai/stt-1b-en_fr-candle'
+  # Taille de Whisper : 'small' (rapide, conseillé) ou 'large-v3-turbo' (plus précis, PC puissant)
+  modele_whisper: 'small'
+  # Avec Whisper : secondes de silence qui marquent la fin de votre phrase.
+  # Augmentez (1.2, 1.5…) si l'agent vous coupe pendant que vous réfléchissez.
+  pause_fin_de_phrase_s: 0.8
 
 # --- 5. Divers --------------------------------------------------------
 

@@ -1,5 +1,6 @@
 # PyTorch est installé à part par installer.bat (version carte graphique ou processeur).
 gradbot>=0.2.0
+faster-whisper>=1.1
 ptts>=0.6.0
 moshi>=0.2.11
 fastapi

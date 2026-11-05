@@ -17,9 +17,10 @@ Quand vous le lui demandez, il écrit une **fiche récapitulative de la séance*
 - Un PC sous **Windows 10 ou 11**, avec **16 Go de mémoire vive** (RAM) au minimum.
 - Environ **15 Go d'espace libre** sur le disque.
 - Un **micro**. Un **casque** est conseillé : sinon l'agent risque de s'entendre parler.
-- Une **carte graphique NVIDIA** (GeForce RTX avec au moins 8 Go de mémoire, par exemple).
-  **Elle est indispensable pour une conversation fluide** : sans elle, l'agent démarre, mais il
-  met trop de temps à comprendre ce que vous dites.
+- Une **carte graphique NVIDIA** (GeForce RTX avec au moins 8 Go de mémoire, par exemple)
+  pour la meilleure expérience : l'agent vous écoute alors en continu avec Kyutai STT.
+  **Sans carte NVIDIA, l'agent fonctionne aussi** : il utilise automatiquement Whisper, qui
+  comprend chaque phrase après une courte pause. Il répond alors quelques secondes après vous.
 - Une connexion internet **pour l'installation et le premier lancement seulement**.
 
 ---
@@ -116,7 +117,9 @@ Pour quitter complètement, **fermez la fenêtre noire**.
 | « Ollama ne répond pas » | Lancez **Ollama** depuis le menu Démarrer, puis relancez `lancer.bat`. |
 | L'agent ne vous entend pas | Autorisez le micro dans le navigateur (icône à gauche de l'adresse) et vérifiez le micro choisi dans Windows. |
 | L'agent se coupe ou se répond à lui-même | Utilisez un casque, ou laissez la case **Anti-écho** cochée. |
-| Les réponses sont lentes | Si la fenêtre noire affiche « aucune carte graphique NVIDIA utilisable », c'est l'écoute qui est trop lente : il faut une carte NVIDIA. Sinon, essayez un cerveau plus léger dans `config.yaml` : `modele: 'qwen2.5:3b'`. |
+| Les réponses sont lentes | La fenêtre noire indique combien de temps prend chaque transcription (« Transcrit en 2.1 s »). Si c'est l'écoute qui est lente, gardez `modele_whisper: 'small'`. Si c'est la réflexion, essayez un cerveau plus léger dans `config.yaml` : `modele: 'qwen2.5:3b'`. |
+| « L'écoute a 40 s de retard » | Vous utilisez Kyutai sans carte NVIDIA : mettez `moteur: 'whisper'` (ou `'auto'`) dans la partie `transcription:` de `config.yaml`. |
+| L'agent répond alors que vous n'aviez pas fini | Avec Whisper, une pause de 0,8 s marque la fin de votre phrase. Si l'agent vous coupe pendant que vous réfléchissez, augmentez `pause_fin_de_phrase_s` (par exemple `1.5`) dans `config.yaml`. Vous pouvez aussi simplement reprendre la parole : il s'arrête quand il vous entend. |
 | La page ne s'ouvre pas toute seule | Copiez dans Chrome ou Edge l'adresse affichée sur la ligne « Prêt ! » (en général <http://127.0.0.1:8000>), sans fermer la fenêtre noire. |
 | « Le port 8000 est déjà pris » | Rien à faire : l'agent prend un autre port. Fermez quand même les anciennes fenêtres noires de l'agent. |
 
@@ -148,13 +151,15 @@ L'agent est construit sur [Gradbot](https://github.com/gradium-ai/gradbot), un c
 pour agents vocaux. Gradbot coordonne trois éléments :
 
 - **les oreilles** : [Kyutai STT](https://github.com/kyutai-labs/delayed-streams-modeling)
-  (`kyutai/stt-1b-en_fr`). Il transcrit en continu et détecte quand vous avez fini de parler ;
+  (`kyutai/stt-1b-en_fr`) avec une carte NVIDIA. Il transcrit en continu et détecte quand vous
+  avez fini de parler. Sans carte NVIDIA : [Whisper](https://github.com/SYSTRAN/faster-whisper)
+  (`small`), avec le détecteur de parole Silero, qui transcrit chaque phrase après une pause ;
 - **le cerveau** : un modèle de langage qui tourne dans [Ollama](https://ollama.com) ;
 - **la bouche** : [Phonon](https://huggingface.co/gradium/phonon-40m-fr) de Gradium (`phonon-40m-fr`).
 
 Normalement, Gradbot utilise les services en ligne de Gradium pour l'écoute et la voix.
 Ici, un petit serveur local (`agent/serveur_voix.py`) parle le même langage que ces services,
-mais il fait tout le travail sur votre PC avec Kyutai STT et Phonon.
+mais il fait tout le travail sur votre PC avec Kyutai STT (ou Whisper) et Phonon.
 
 Organisation des fichiers :
 
@@ -167,7 +172,7 @@ agent/
   consignes.py        le personnage du directeur de mémoire
   coffre.py           la lecture des notes (lecture seule) et l'écriture des fiches
   serveur_voix.py     l'écoute et la voix en local (protocole Gradium)
-  moteurs.py          Kyutai STT et Phonon
+  moteurs.py          Kyutai STT, Whisper et Phonon
   ollama.py           la communication avec Ollama
   static/index.html   la page web
 tests/                les tests automatiques (pour les développeurs, avec pytest)

@@ -131,12 +131,19 @@ async def ecoute_ws(ws: fastapi.WebSocket):
 
     async def traiter(trame: np.ndarray):
         nonlocal pas_idx
-        jeton, morceau, probas = await asyncio.to_thread(moteur.pas, trame)
         pas_idx += 1
         temps = pas_idx * 0.08
-        messages = assembleur.pousser(jeton, morceau, temps) if jeton is not None else []
-        if probas and probas[min(2, len(probas) - 1)] > 0.5:
-            messages += assembleur.terminer()  # fin de tour probable : on livre le mot
+        if hasattr(moteur, "pas_mots"):  # Whisper : des mots entiers, phrase par phrase
+            mots, probas = await asyncio.to_thread(moteur.pas_mots, trame)
+            messages = [
+                {"type": "text", "text": mot, "start_s": debut, "stream_id": 0}
+                for mot, debut in mots
+            ]
+        else:  # Kyutai : des morceaux de mots, trame par trame
+            jeton, morceau, probas = await asyncio.to_thread(moteur.pas, trame)
+            messages = assembleur.pousser(jeton, morceau, temps) if jeton is not None else []
+            if probas and probas[min(2, len(probas) - 1)] > 0.5:
+                messages += assembleur.terminer()  # fin de tour probable : on livre le mot
         for m in messages:
             await ws.send_json(m)
         await ws.send_json(

@@ -363,3 +363,86 @@ def test_premier_port_libre():
         pris = occupe.getsockname()[1]
         libre = premier_port_libre(pris)
         assert libre is not None and libre != pris
+
+
+def _ecoute_par_phrases_test(transcrites):
+    def prob(bloc):
+        return 0.9 if float(np.abs(bloc).mean()) > 0.01 else 0.1
+
+    def transcrire(audio):
+        transcrites.append(len(audio) / 16000)
+        return "Ma problématique porte sur les tiers-lieux."
+
+    return moteurs.EcouteParPhrases(prob, transcrire, pause_s=0.8)
+
+
+def test_ecoute_par_phrases():
+    transcrites: list = []
+    e = _ecoute_par_phrases_test(transcrites)
+    t = np.arange(1920) / 24000
+    voix = (0.3 * np.sin(2 * np.pi * 300 * t)).astype(np.float32)
+    silence = np.zeros(1920, np.float32)
+    sorties = [e.pas_mots(silence) for _ in range(10)]  # 0,8 s de silence
+    sorties += [e.pas_mots(voix) for _ in range(25)]  # 2 s de parole
+    sorties += [e.pas_mots(silence) for _ in range(15)]  # 1,2 s de pause
+    mots = [m for ms, _ in sorties for m in ms]
+    assert [m for m, _ in mots] == "Ma problématique porte sur les tiers-lieux.".split()
+    assert abs(mots[0][1] - 0.8) < 0.1  # début de la phrase
+    assert 2.0 <= transcrites[0] <= 3.2  # la phrase (avec un peu d'avant et la pause)
+    probas = [p[2] for _, p in sorties]
+    assert probas[0] == 1.0 and probas[15] == 0.05  # silence puis parole
+    i_mots = next(i for i, (ms, _) in enumerate(sorties) if ms)
+    assert probas[i_mots - 1] == 0.6  # pause avant la transcription : ni parole ni fin de tour
+    assert probas[i_mots] == 1.0  # fin de tour annoncée avec les mots
+
+
+def test_nettoyer_transcription():
+    assert moteurs.nettoyer_transcription(" Sous-titres réalisés par la communauté d'Amara.org ") == ""
+    assert moteurs.nettoyer_transcription(" Bonjour. ") == "Bonjour."
+
+
+def test_choix_moteur_ecoute():
+    from agent.__main__ import choisir_moteur_ecoute
+
+    r = reglages.Reglages(dossier_notes=pathlib.Path("."), dossier_recaps=pathlib.Path("r"))
+    r.materiel = "cpu"
+    assert choisir_moteur_ecoute(r) == "whisper"
+    r.stt_moteur = "kyutai"
+    assert choisir_moteur_ecoute(r) == "kyutai"
+
+
+def _trames_voix(n):
+    t = np.arange(1920) / 24000
+    voix = (0.3 * np.sin(2 * np.pi * 300 * t)).astype(np.float32)
+    return [voix] * n
+
+
+def test_ecoute_longue_tirade_par_morceaux():
+    transcrites: list = []
+    e = _ecoute_par_phrases_test(transcrites)
+    silence = np.zeros(1920, np.float32)
+    # 20 s de parole avec une micro-pause de 0,32 s toutes les 4 s, puis une vraie pause.
+    trames = []
+    for _ in range(5):
+        trames += _trames_voix(46) + [silence] * 4
+    sorties = [e.pas_mots(tr) for tr in trames]
+    probas_pendant = [p[2] for _, p in sorties]
+    assert 1.0 not in probas_pendant  # jamais « fin de tour » tant que vous parlez
+    assert len(transcrites) >= 2  # des morceaux ont été livrés en cours de route
+    assert all(d <= 8.5 for d in transcrites)
+    fin = [e.pas_mots(silence) for _ in range(15)]
+    assert any(ms for ms, _ in fin) and fin[-1][1][2] == 1.0
+    assert abs(sum(transcrites) - 20.3) < 1.0  # rien n'est perdu, rien n'est doublé
+
+
+def test_ecoute_phrase_conservee_si_redemarrage():
+    transcrites: list = []
+    e = _ecoute_par_phrases_test(transcrites)
+    for tr in _trames_voix(25):  # 2 s de parole
+        e.pas_mots(tr)
+    e.reinitialiser()  # Gradbot redémarre l'écoute en pleine phrase
+    for tr in _trames_voix(10):
+        e.pas_mots(tr)
+    sorties = [e.pas_mots(np.zeros(1920, np.float32)) for _ in range(15)]
+    assert any(ms for ms, _ in sorties)
+    assert transcrites[0] >= 2.8  # les 2 s d'avant le redémarrage sont incluses

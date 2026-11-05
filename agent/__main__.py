@@ -24,6 +24,37 @@ def premier_port_libre(depart: int, essais: int = 20) -> int | None:
     return None
 
 
+def choisir_moteur_ecoute(reglages) -> str:
+    """« auto » : Kyutai avec une carte NVIDIA, Whisper sur processeur seul."""
+    if reglages.stt_moteur in ("kyutai", "whisper"):
+        return reglages.stt_moteur
+    if reglages.materiel == "cpu":
+        return "whisper"
+    import torch
+
+    return "kyutai" if torch.cuda.is_available() else "whisper"
+
+
+def charger_ecoute(reglages, moteurs, log):
+    if choisir_moteur_ecoute(reglages) == "kyutai":
+        log.info(
+            "Étape 2/3 : l'écoute (Kyutai). Au premier lancement, environ 2,4 Go à télécharger ; "
+            "le chargement prend ensuite une à deux minutes."
+        )
+        return moteurs.MoteurEcoute(reglages.stt_modele, reglages.materiel)
+    log.info(
+        "Étape 2/3 : l'écoute (Whisper « %s », car pas de carte NVIDIA). "
+        "Environ 500 Mo au premier lancement.",
+        reglages.whisper_modele,
+    )
+    # Les titres des notes et le sujet aident Whisper à reconnaître votre vocabulaire.
+    titres = sorted({p.stem for p in reglages.dossier_notes.rglob("*.md")})[:40]
+    invite = ". ".join(filter(None, [reglages.sujet_memoire, ", ".join(titres)]))
+    return moteurs.MoteurEcouteWhisper(
+        reglages.whisper_modele, invite=invite[:600], pause_s=reglages.whisper_pause_s
+    )
+
+
 def main() -> int:
     logging.basicConfig(
         level=logging.INFO,
@@ -78,11 +109,7 @@ def main() -> int:
     log.info("Cerveau prêt : %s", modele)
 
     try:
-        log.info(
-            "Étape 2/3 : l'écoute (Kyutai). Au premier lancement, environ 2,4 Go à télécharger ; "
-            "le chargement prend ensuite une à deux minutes."
-        )
-        ecoute = moteurs.MoteurEcoute(reglages.stt_modele, reglages.materiel)
+        ecoute = charger_ecoute(reglages, moteurs, log)
         log.info("Étape 3/3 : la voix (Phonon). Environ 120 Mo au premier lancement.")
         voix = moteurs.MoteurVoix(
             reglages.voix_modele, reglages.voix_nom, reglages.voix_vitesse, reglages.materiel
