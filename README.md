@@ -122,7 +122,10 @@ Pour quitter complètement, **fermez la fenêtre noire**.
 
 ## Réglages utiles (dans `config.yaml`)
 
-- **`voix > nom`** : choisit une autre voix. La liste des voix s'affiche dans la fenêtre noire au démarrage.
+- **`voix > nom`** : choisit une autre voix française, par exemple `nom: 'Hélène'`.
+  Voix féminines : Hélène (grave, posée), Tiphaine, Orianne, Ninon, Noémie, Coralie, Maëlys, Solène, Lilou.
+  Voix masculines : Arnaud (grave, direct), Lucien (posé), Augustin, Jules, Baptiste, Marius.
+  La voix est téléchargée (quelques Ko) au lancement suivant.
 - **`voix > vitesse`** : `-0.2` pour parler plus vite, `0.2` pour parler plus lentement.
 - **`ollama > modele`** : le cerveau. `qwen2.5:7b` convient à la plupart des PC.
   `mistral-small3.2` donne de meilleures réponses, mais demande un PC très puissant.

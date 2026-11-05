@@ -35,7 +35,9 @@ ollama:
 voix:
   modele: 'hf://gradium/phonon-40m-fr'
   # Nom de la voix. Laissez vide pour la voix par défaut.
-  # La liste des voix disponibles s'affiche dans la fenêtre au démarrage.
+  # Voix françaises : Hélène, Tiphaine, Orianne, Ninon, Noémie, Coralie, Maëlys,
+  # Solène, Lilou (féminines) ; Arnaud, Lucien, Augustin, Jules, Baptiste, Marius
+  # (masculines). Exemple : nom: 'Hélène'
   nom: ''
   # Vitesse : 0 = normal, -0.2 = plus rapide, 0.2 = plus lent.
   vitesse: 0.0
