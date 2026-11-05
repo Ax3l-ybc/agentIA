@@ -82,22 +82,28 @@ def preparer(adresse: str, modele: str, contexte: int) -> str:
 
     Renvoie le nom du modèle à utiliser.
     """
+    log.info("Vérification d'Ollama…")
     verifier(adresse)
     if modele not in modeles_installes(adresse):
         log.info("Téléchargement du modèle %s (une seule fois, cela peut être long)…", modele)
         with _requete(adresse, "/api/pull", {"model": modele, "stream": True}, delai=None) as r:
-            dernier = -10
+            derniers: dict[str, int] = {}
             for ligne in r:
                 etat = json.loads(ligne or b"{}")
                 if "error" in etat:
                     raise ErreurOllama(f"Téléchargement impossible : {etat['error']}")
                 total, fait = etat.get("total"), etat.get("completed")
-                if total and fait:
+                # On n'affiche que les gros fichiers, chacun de 5 % en 5 %.
+                if total and fait and total > 50_000_000:
                     pourcent = int(100 * fait / total)
-                    if pourcent >= dernier + 10:
-                        log.info("  … %s %%", pourcent)
-                        dernier = pourcent
+                    cle = etat.get("digest", "")
+                    if pourcent >= derniers.get(cle, -5) + 5:
+                        log.info(
+                            "  … cerveau : %s %% (%.1f / %.1f Go)", pourcent, fait / 1e9, total / 1e9
+                        )
+                        derniers[cle] = pourcent
     # Variante du modèle avec une mémoire de travail suffisante pour les notes.
+    log.info("Préparation du cerveau « %s »…", NOM_MODELE_AGENT)
     try:
         with _requete(
             adresse,

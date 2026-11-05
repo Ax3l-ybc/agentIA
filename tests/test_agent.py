@@ -309,3 +309,46 @@ def test_bout_en_bout(coffre_test):
     assert "Fais la fiche" in contenu  # transcription incluse
     # Les notes n'ont pas bougé d'un octet.
     assert empreinte(notes) == avant
+
+
+def test_ollama_preparer_affiche_la_progression(caplog):
+    from fastapi.responses import StreamingResponse
+
+    from agent import ollama
+
+    app = fastapi.FastAPI()
+    cree = {}
+
+    @app.get("/api/version")
+    async def version():
+        return {"version": "0.0"}
+
+    @app.get("/api/tags")
+    async def tags():
+        return {"models": []}
+
+    @app.post("/api/pull")
+    async def pull():
+        def flux():
+            yield json.dumps({"status": "pulling manifest"}) + "\n"
+            for fait in range(0, 5_000_000_001, 500_000_000):
+                yield json.dumps({"digest": "a", "total": 5_000_000_000, "completed": fait}) + "\n"
+            yield json.dumps({"status": "success"}) + "\n"
+
+        return StreamingResponse(flux(), media_type="application/x-ndjson")
+
+    @app.post("/api/create")
+    async def create(req: fastapi.Request):
+        cree.update(await req.json())
+        return {"status": "success"}
+
+    port = port_libre()
+    serveur = lancer_serveur(app, port)
+    try:
+        with caplog.at_level("INFO", logger="agent.ollama"):
+            nom = ollama.preparer(f"http://127.0.0.1:{port}", "qwen2.5:7b", 16384)
+    finally:
+        serveur.should_exit = True
+    assert nom == ollama.NOM_MODELE_AGENT
+    assert cree["from"] == "qwen2.5:7b" and cree["parameters"]["num_ctx"] == 16384
+    assert "100 %" in caplog.text and "5.0 Go" in caplog.text

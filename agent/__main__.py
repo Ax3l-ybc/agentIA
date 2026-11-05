@@ -28,12 +28,15 @@ def main() -> int:
         log.error("PROBLÈME DE RÉGLAGES :\n%s", exc)
         return 1
 
+    log.info("Réglages lus. Notes : %s", reglages.dossier_notes)
     if reglages.jeton_hf:
         os.environ["HF_TOKEN"] = reglages.jeton_hf
+    else:
+        log.warning("Aucun jeton Hugging Face dans config.yaml : la voix ne pourra pas être téléchargée.")
 
     from . import moteurs, ollama
 
-    # 1. Le cerveau (Ollama)
+    log.info("Étape 1/3 : le cerveau (Ollama). Au premier lancement, environ 5 Go à télécharger.")
     try:
         modele = ollama.preparer(
             reglages.ollama_adresse, reglages.ollama_modele, reglages.ollama_contexte
@@ -43,9 +46,13 @@ def main() -> int:
         return 1
     log.info("Cerveau prêt : %s", modele)
 
-    # 2. L'écoute et la voix (téléchargées au premier lancement)
     try:
+        log.info(
+            "Étape 2/3 : l'écoute (Kyutai). Au premier lancement, environ 2,4 Go à télécharger ; "
+            "le chargement prend ensuite une à deux minutes."
+        )
         ecoute = moteurs.MoteurEcoute(reglages.stt_modele, reglages.materiel)
+        log.info("Étape 3/3 : la voix (Phonon). Environ 120 Mo au premier lancement.")
         voix = moteurs.MoteurVoix(
             reglages.voix_modele, reglages.voix_nom, reglages.voix_vitesse, reglages.materiel
         )
