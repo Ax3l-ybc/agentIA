@@ -18,7 +18,8 @@ log = logging.getLogger("alloia")
 
 def configurer_journal() -> None:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s  %(message)s", datefmt="%H:%M:%S")
-    for bavard in ("httpx", "huggingface_hub", "uvicorn.access", "faster_whisper"):
+    for bavard in ("httpx", "httpx2", "httpcore", "httpcore2", "huggingface_hub",
+                   "uvicorn.access", "faster_whisper"):
         logging.getLogger(bavard).setLevel(logging.WARNING)
 
 
@@ -137,7 +138,24 @@ async def principal(args) -> int:
         log.error("PROBLÈME AVEC OLLAMA :\n%s", exc)
         return 1
     log.info("Étape 2/3 : l'écoute et la voix.")
-    await asyncio.to_thread(charger_moteurs, r)
+    try:
+        await asyncio.to_thread(charger_moteurs, r)
+    except Exception as exc:  # noqa: BLE001
+        texte = str(exc)
+        if any(m in texte for m in ("GatedRepo", "Authentication", "401", "403", "restricted")):
+            log.error(
+                "TÉLÉCHARGEMENT DE LA VOIX REFUSÉ PAR HUGGING FACE.\n"
+                "%s\n"
+                "Vérifiez : 1) que vous avez accepté les conditions sur "
+                "https://huggingface.co/gradium/phonon-40m-fr (avec le même compte que le jeton) ;\n"
+                "2) que le jeton est bien écrit dans alloia.yaml, ligne « jeton_huggingface: »,"
+                " entre apostrophes.",
+                "Aucun jeton n'est indiqué dans alloia.yaml." if not r.jeton_hf
+                else "Un jeton est indiqué dans alloia.yaml, mais il n'a pas accès au modèle.",
+            )
+        else:
+            log.exception("Impossible de charger l'écoute ou la voix")
+        return 1
     r.port = premier_port_libre(r.port) or r.port
     serveur, _ = await demarrer_serveur_voix(r.port)
     log.info("Étape 3/3 : le combiné.")
