@@ -140,6 +140,10 @@ class Appel:
         au_revoir_entendu = [0.0]
         debut = time.monotonic()
         combine.vider_micro()
+        chrono: dict[str, float] = {}
+
+        def ecoute_duree() -> float:
+            return getattr(MOTEURS["ecoute"], "derniere_duree_s", 0.0)
 
         async def envoyer_micro():
             silence = np.zeros(1920, dtype=np.float32)
@@ -162,6 +166,9 @@ class Appel:
                 if t == "audio" and msg.data:
                     combine.jouer(bytes(msg.data))
                 elif t == "stt_text" and msg.text:
+                    if "fin_phrase" not in chrono:
+                        # Whisper livre la phrase ~pause s après votre dernier mot, puis transcrit.
+                        chrono["fin_phrase"] = time.monotonic() - self.r.pause_s - ecoute_duree()
                     conv.ajouter("maker", msg.text)
                     derniere_parole[0] = time.monotonic()
                     # « au revoir » dit après la première minute : l'appel se termine si
@@ -175,8 +182,22 @@ class Appel:
                 elif t == "tts_text" and msg.text:
                     conv.ajouter("alloia", gradbot.schemas.sanitize(msg.text))
                 elif t == "event" and msg.event is not None:
-                    if msg.event.event_type == "interrupted":
+                    ev = msg.event.event_type
+                    if ev == "interrupted":
                         combine.vider_haut_parleur()
+                    # Mesure du temps de réponse, étape par étape (affichée dans le terminal).
+                    elif ev == "push_to_llm":
+                        chrono["llm"] = time.monotonic()
+                    elif ev == "first_word" and chrono.get("llm"):
+                        chrono["mot"] = time.monotonic()
+                        log.info("  réflexion : premier mot après %.1f s", chrono["mot"] - chrono["llm"])
+                    elif ev == "first_tts_audio" and chrono.get("llm"):
+                        log.info(
+                            "  voix : premier son après %.1f s (total depuis votre fin de phrase : %.1f s)",
+                            time.monotonic() - chrono.get("mot", chrono["llm"]),
+                            time.monotonic() - chrono.get("fin_phrase", chrono["llm"]),
+                        )
+                        chrono.clear()
                 elif t == "tool_call":
                     outil = gradbot.ToolHandle(msg.tool_call_handle, msg.tool_call)
                     if outil.name == "raccrocher":

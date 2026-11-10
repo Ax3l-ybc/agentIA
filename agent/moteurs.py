@@ -322,8 +322,9 @@ class MoteurEcouteWhisper(EcouteParPhrases):
             initial_prompt=self.invite,
         )
         texte = " ".join(s.text.strip() for s in segments if s.no_speech_prob < 0.6)
+        self.derniere_duree_s = time.time() - debut
         log.info(
-            "Transcrit en %.1f s (%.1f s de parole) : %s",
+            "  écoute : transcrit en %.1f s (%.1f s de parole) : %s",
             time.time() - debut,
             len(audio) / self.TAUX_WHISPER,
             texte,
