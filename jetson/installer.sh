@@ -32,6 +32,8 @@ fi
 
 etape 4 "Gradbot (compilation : 10 à 20 minutes la première fois)"
 if ! .venv/bin/python -c "import gradbot" 2>/dev/null; then
+    echo "Rien ne s'affiche pendant la compilation : c'est normal, patientez."
+    echo "(Pour vérifier qu'elle avance : commande « top » dans un autre terminal.)"
     uv pip install --python .venv/bin/python \
         "gradbot @ git+https://github.com/gradium-ai/gradbot@v0.2.0#subdirectory=gradbot_py"
 fi
