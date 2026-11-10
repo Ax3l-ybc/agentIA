@@ -9,6 +9,8 @@ export PATH="$HOME/.cargo/bin:$HOME/.local/bin:$PATH"
 etape() { echo; echo "=== [$1/6] $2 ==="; }
 
 etape 1 "Paquets du système (mot de passe demandé)"
+# Termine une éventuelle installation interrompue auparavant (sinon apt refuse de continuer).
+sudo dpkg --configure -a
 sudo apt-get update
 sudo apt-get install -y build-essential cmake pkg-config curl git \
     libopus-dev libportaudio2 alsa-utils
