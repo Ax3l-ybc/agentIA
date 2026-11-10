@@ -1,0 +1,8 @@
+# Modules d'AlloIA sur la Jetson (Gradbot est compilé à part par installer.sh).
+faster-whisper>=1.1
+ptts>=0.6.0
+fastapi
+uvicorn[standard]
+pyyaml
+numpy
+sounddevice

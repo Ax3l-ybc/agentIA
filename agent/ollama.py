@@ -77,7 +77,13 @@ def modeles_installes(adresse: str) -> set[str]:
     return noms
 
 
-def preparer(adresse: str, modele: str, contexte: int) -> str:
+def preparer(
+    adresse: str,
+    modele: str,
+    contexte: int,
+    nom: str = NOM_MODELE_AGENT,
+    temperature: float = 0.6,
+) -> str:
     """Télécharge le modèle si besoin et crée une variante à grand contexte.
 
     Renvoie le nom du modèle à utiliser.
@@ -103,29 +109,35 @@ def preparer(adresse: str, modele: str, contexte: int) -> str:
                         )
                         derniers[cle] = pourcent
     # Variante du modèle avec une mémoire de travail suffisante pour les notes.
-    log.info("Préparation du cerveau « %s »…", NOM_MODELE_AGENT)
+    log.info("Préparation du cerveau « %s »…", nom)
     try:
         with _requete(
             adresse,
             "/api/create",
             {
-                "model": NOM_MODELE_AGENT,
+                "model": nom,
                 "from": modele,
-                "parameters": {"num_ctx": contexte, "temperature": 0.6},
+                "parameters": {"num_ctx": contexte, "temperature": temperature},
                 "stream": False,
             },
             delai=300,
         ) as r:
             r.read()
-        return NOM_MODELE_AGENT
+        return nom
     except (urllib.error.URLError, OSError) as exc:
         log.warning(
             "Impossible de créer la variante « %s » (%s). Utilisation directe de %s.",
-            NOM_MODELE_AGENT,
+            nom,
             exc,
             modele,
         )
         return modele
+
+
+def precharger(adresse: str, modele: str) -> None:
+    """Charge le modèle en mémoire tout de suite (le premier appel sera rapide)."""
+    with _requete(adresse, "/api/generate", {"model": modele, "keep_alive": -1}, delai=600) as r:
+        r.read()
 
 
 def discuter(adresse: str, modele: str, messages: list[dict], contexte: int) -> str:

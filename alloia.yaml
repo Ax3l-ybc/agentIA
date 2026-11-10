@@ -1,0 +1,66 @@
+# =====================================================================
+#  Réglages d'AlloIA (le téléphone de documentation du FabLab)
+# =====================================================================
+#  Modifiez avec un éditeur de texte (par exemple : nano alloia.yaml).
+#  Gardez les apostrophes simples ' ' autour des textes.
+# =====================================================================
+
+# Dossier où sont écrites les documentations (un fichier .md par appel).
+dossier_docs: '~/AlloIA/docs'
+
+# Comportement de l'agent et modèle de la documentation (fichiers modifiables).
+mode_de_conduite: 'alloia_conduite.md'
+modele_doc: 'alloia_modele_doc.md'
+
+# --- Le « cerveau » (Ollama) -----------------------------------------
+ollama:
+  adresse: 'http://127.0.0.1:11434'
+  # Ministral 3 (3B) : le modèle de Mistral pour les petits appareils (environ 3 Go).
+  modele: 'ministral-3:3b'
+  taille_contexte: 8192
+  temperature: 0.4
+
+# --- L'écoute (Whisper) ----------------------------------------------
+ecoute:
+  # 'small' (bon compromis), 'base' (plus rapide, moins précis)
+  modele_whisper: 'small'
+  # Secondes de silence qui marquent la fin d'une phrase.
+  pause_fin_de_phrase_s: 0.9
+
+# --- La voix (Phonon) ------------------------------------------------
+voix:
+  modele: 'hf://gradium/phonon-40m-fr'
+  # Voix françaises : Hélène, Tiphaine, Orianne, Ninon, Noémie, Coralie, Maëlys, Solène,
+  # Lilou, Arnaud, Lucien, Augustin, Jules, Baptiste, Marius. Vide = voix par défaut.
+  nom: 'Jules'
+  vitesse: 0.0
+
+# Jeton Hugging Face (obligatoire au premier lancement pour télécharger la voix).
+jeton_huggingface: ''
+
+# --- Le combiné (carte son USB) --------------------------------------
+audio:
+  # Nom (ou morceau du nom) de la carte son. Vide = carte par défaut.
+  # La liste s'obtient avec : ./jetson/lancer.sh --lister-audio
+  entree: ''
+  sortie: ''
+  # Coupe le micro pendant que l'agent parle, pour qu'il ne s'entende pas lui-même
+  # (indispensable si le micro et le haut-parleur sont séparés). On ne peut alors pas
+  # couper la parole à l'agent.
+  couper_micro_quand_agent_parle: true
+  # Volume de la voix (1.0 = normal).
+  volume: 1.0
+
+# --- Déroulement d'un appel ------------------------------------------
+appel:
+  # L'appel commence quand quelqu'un parle dans le micro pendant au moins ce temps.
+  parole_pour_decrocher_s: 0.6
+  # Secondes de silence avant que l'agent relance la personne.
+  relance_apres_s: 12
+  # L'appel se termine tout seul après ce silence (personne ne répond plus).
+  fin_apres_silence_s: 60
+  # Durée maximale d'un appel, en minutes.
+  duree_max_min: 25
+
+# Port du serveur vocal local (interne à la carte).
+port: 8765
