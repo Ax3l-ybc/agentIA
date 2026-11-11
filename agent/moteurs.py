@@ -305,7 +305,14 @@ class MoteurEcouteWhisper(EcouteParPhrases):
         from faster_whisper import WhisperModel
 
         log.info("Chargement de l'écoute Whisper « %s » (processeur)…", modele)
-        self.whisper = WhisperModel(modele, device="cpu", compute_type="int8")
+        try:
+            # D'abord la copie déjà téléchargée sur la machine : pas d'appel à internet.
+            self.whisper = WhisperModel(
+                modele, device="cpu", compute_type="int8", local_files_only=True
+            )
+        except Exception:  # noqa: BLE001 (premier lancement : téléchargement)
+            log.info("Téléchargement de Whisper « %s » (une seule fois)…", modele)
+            self.whisper = WhisperModel(modele, device="cpu", compute_type="int8")
         self.invite = invite or None
         super().__init__(_DetecteurSilero(), self._transcrire, pause_s=pause_s)
         # Échauffement : la toute première transcription est plus lente.
