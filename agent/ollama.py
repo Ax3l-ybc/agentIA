@@ -77,19 +77,8 @@ def modeles_installes(adresse: str) -> set[str]:
     return noms
 
 
-def preparer(
-    adresse: str,
-    modele: str,
-    contexte: int,
-    nom: str = NOM_MODELE_AGENT,
-    temperature: float = 0.6,
-) -> str:
-    """Télécharge le modèle si besoin et crée une variante à grand contexte.
-
-    Renvoie le nom du modèle à utiliser.
-    """
-    log.info("Vérification d'Ollama…")
-    verifier(adresse)
+def telecharger(adresse: str, modele: str) -> None:
+    """Télécharge le modèle dans Ollama s'il n'y est pas encore (avec la progression)."""
     if modele not in modeles_installes(adresse):
         log.info("Téléchargement du modèle %s (une seule fois, cela peut être long)…", modele)
         with _requete(adresse, "/api/pull", {"model": modele, "stream": True}, delai=None) as r:
@@ -108,6 +97,22 @@ def preparer(
                             "  … cerveau : %s %% (%.1f / %.1f Go)", pourcent, fait / 1e9, total / 1e9
                         )
                         derniers[cle] = pourcent
+
+
+def preparer(
+    adresse: str,
+    modele: str,
+    contexte: int,
+    nom: str = NOM_MODELE_AGENT,
+    temperature: float = 0.6,
+) -> str:
+    """Télécharge le modèle si besoin et crée une variante à grand contexte.
+
+    Renvoie le nom du modèle à utiliser.
+    """
+    log.info("Vérification d'Ollama…")
+    verifier(adresse)
+    telecharger(adresse, modele)
     # Variante du modèle avec une mémoire de travail suffisante pour les notes.
     log.info("Préparation du cerveau « %s »…", nom)
     try:
@@ -134,13 +139,18 @@ def preparer(
         return modele
 
 
-def precharger(adresse: str, modele: str) -> None:
+def precharger(adresse: str, modele: str, contexte: int | None = None) -> None:
     """Charge le modèle en mémoire tout de suite (le premier appel sera rapide)."""
-    with _requete(adresse, "/api/generate", {"model": modele, "keep_alive": -1}, delai=600) as r:
+    corps = {"model": modele, "keep_alive": -1}
+    if contexte:
+        corps["options"] = {"num_ctx": contexte}
+    with _requete(adresse, "/api/generate", corps, delai=600) as r:
         r.read()
 
 
-def discuter(adresse: str, modele: str, messages: list[dict], contexte: int) -> str:
+def discuter(
+    adresse: str, modele: str, messages: list[dict], contexte: int, reflexion: bool | None = None
+) -> str:
     """Appel simple (non vocal) au modèle, utilisé pour rédiger les fiches."""
     corps = {
         "model": modele,
@@ -148,6 +158,8 @@ def discuter(adresse: str, modele: str, messages: list[dict], contexte: int) -> 
         "stream": False,
         "options": {"num_ctx": contexte, "temperature": 0.3},
     }
+    if reflexion is not None:
+        corps["think"] = reflexion
     with _requete(adresse, "/api/chat", corps, delai=600) as r:
         reponse = json.load(r)
     return (reponse.get("message") or {}).get("content", "").strip()

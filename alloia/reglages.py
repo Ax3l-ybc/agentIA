@@ -12,6 +12,8 @@ from agent.reglages import ErreurReglages, reparer_apostrophes
 
 RACINE = pathlib.Path(__file__).resolve().parent.parent
 FICHIER_CONFIG = RACINE / "alloia.yaml"
+# Réglages personnels (jeton, carte son…) : jamais modifiés par les mises à jour (git pull).
+FICHIER_PERSO = RACINE / "alloia.perso.yaml"
 
 
 @dataclasses.dataclass
@@ -20,11 +22,14 @@ class Reglages:
     mode_de_conduite: pathlib.Path = RACINE / "alloia_conduite.md"
     modele_doc: pathlib.Path = RACINE / "alloia_modele_doc.md"
     ollama_adresse: str = "http://127.0.0.1:11434"
-    ollama_modele: str = "ministral-3:3b"
+    ollama_modele: str = "gemma4:e2b"
     ollama_contexte: int = 8192
     ollama_temperature: float = 0.4
-    whisper_modele: str = "small"
-    pause_s: float = 0.9
+    ollama_reflexion: bool = False
+    pause_s: float = 1.3
+    voix_moteur: str = "phonon"  # "phonon" ou "ollama"
+    voix_ollama_modele: str = "lfm3-omni"
+    voix_ollama_nom: str = "female-french"
     voix_modele: str = "hf://gradium/phonon-40m-fr"
     voix_nom: str = ""
     voix_vitesse: float = 0.0
@@ -47,17 +52,33 @@ def _chemin(valeur, defaut: pathlib.Path) -> pathlib.Path:
     return p if p.is_absolute() else RACINE / p
 
 
-def charger(fichier: pathlib.Path = FICHIER_CONFIG) -> Reglages:
-    if not fichier.exists():
-        raise ErreurReglages(f"Fichier de réglages introuvable : {fichier}")
+def lire_yaml(fichier: pathlib.Path) -> dict:
     texte = fichier.read_text(encoding="utf-8-sig")
     try:
-        brut = yaml.safe_load(texte) or {}
+        return yaml.safe_load(texte) or {}
     except yaml.YAMLError:
         try:
-            brut = yaml.safe_load(reparer_apostrophes(texte)) or {}
+            return yaml.safe_load(reparer_apostrophes(texte)) or {}
         except yaml.YAMLError as exc:
-            raise ErreurReglages(f"alloia.yaml est mal écrit.\nDétail : {exc}") from exc
+            raise ErreurReglages(f"{fichier.name} est mal écrit.\nDétail : {exc}") from exc
+
+
+def fusionner(base: dict, dessus: dict) -> dict:
+    resultat = dict(base)
+    for cle, valeur in dessus.items():
+        if isinstance(valeur, dict) and isinstance(resultat.get(cle), dict):
+            resultat[cle] = fusionner(resultat[cle], valeur)
+        else:
+            resultat[cle] = valeur
+    return resultat
+
+
+def charger(fichier: pathlib.Path = FICHIER_CONFIG, perso: pathlib.Path | None = FICHIER_PERSO) -> Reglages:
+    if not fichier.exists():
+        raise ErreurReglages(f"Fichier de réglages introuvable : {fichier}")
+    brut = lire_yaml(fichier)
+    if perso is not None and perso.exists():
+        brut = fusionner(brut, lire_yaml(perso))
 
     o = brut.get("ollama") or {}
     e = brut.get("ecoute") or {}
@@ -78,8 +99,11 @@ def charger(fichier: pathlib.Path = FICHIER_CONFIG) -> Reglages:
         ollama_modele=val(o, "modele", d.ollama_modele, str),
         ollama_contexte=val(o, "taille_contexte", d.ollama_contexte, int),
         ollama_temperature=val(o, "temperature", d.ollama_temperature, float),
-        whisper_modele=val(e, "modele_whisper", d.whisper_modele, str),
+        ollama_reflexion=bool(o.get("reflexion", False)),
         pause_s=val(e, "pause_fin_de_phrase_s", d.pause_s, float),
+        voix_moteur=str(v.get("moteur") or d.voix_moteur).lower(),
+        voix_ollama_modele=val(v, "modele_ollama", d.voix_ollama_modele, str),
+        voix_ollama_nom=val(v, "voix_ollama", d.voix_ollama_nom, str),
         voix_modele=val(v, "modele", d.voix_modele, str),
         voix_nom=str(v.get("nom") or "").strip(),
         voix_vitesse=val(v, "vitesse", 0.0, float),

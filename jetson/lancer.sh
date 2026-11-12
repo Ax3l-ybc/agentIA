@@ -10,5 +10,5 @@ if [ ! -x .venv/bin/python ]; then
 fi
 export HF_HUB_DISABLE_SYMLINKS_WARNING=1
 export NO_PROXY=127.0.0.1,localhost
-export OMP_NUM_THREADS=4   # Whisper sur 4 des 6 cœurs, le reste pour le système et la voix
+export OMP_NUM_THREADS=4   # voix Phonon sur 4 des 6 cœurs, le reste pour le système
 exec .venv/bin/python -m alloia "$@"

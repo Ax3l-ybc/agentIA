@@ -14,6 +14,8 @@ from .appel import Conversation
 
 log = logging.getLogger("alloia.doc")
 
+MOTS_MINIMUM = 15  # en dessous, le maker n'a pas raconté de projet
+
 CONSIGNE = """
 Tu rédiges la documentation d'un projet réalisé dans un FabLab, à partir de la transcription
 d'un appel téléphonique où le maker a raconté son projet à AlloIA.
@@ -70,9 +72,11 @@ def rediger(
     contexte: int,
     modele_doc: str,
     dossier: pathlib.Path,
+    reflexion: bool | None = None,
 ) -> pathlib.Path | None:
-    if not conv.maker_a_parle() or len(conv.transcription()) < 80:
-        log.info("Appel trop court : pas de documentation.")
+    mots_maker = sum(len(e.texte.split()) for e in conv.echanges if e.role == "maker")
+    if mots_maker < MOTS_MINIMUM:
+        log.info("Appel trop court (%d mots du maker) : pas de documentation.", mots_maker)
         return None
     quand = conv.debut
     systeme = CONSIGNE.format(date=f"{quand:%Y-%m-%d}", modele=modele_doc)
@@ -84,6 +88,7 @@ def rediger(
             {"role": "user", "content": "TRANSCRIPTION DE L'APPEL :\n" + conv.transcription()},
         ],
         contexte,
+        reflexion,
     )
     contenu = nettoyer(reponse)
     contenu += (

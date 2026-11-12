@@ -1,37 +1,62 @@
-"""Un appel : décrocher, converser avec la personne, raccrocher, puis rédiger la doc."""
+"""Un appel AlloIA (version « omni ») : le modèle écoute directement la voix du maker.
+
+Déroulement d'un tour de parole :
+1. le micro est découpé en phrases (détecteur Silero, pause de fin de phrase) ;
+2. l'audio de la phrase est envoyé tel quel au modèle (Gemma 4), avec l'historique ;
+3. la réponse arrive en flux et chaque phrase est dite par la voix dès qu'elle est complète ;
+4. en arrière-plan, la phrase du maker est retranscrite (historique et documentation).
+Le micro est coupé pendant que l'agent parle (anti-écho).
+"""
 
 from __future__ import annotations
 
 import asyncio
-import contextlib
 import dataclasses
 import datetime
-import json
 import logging
 import re
+import threading
 import time
 
-import gradbot
 import numpy as np
 
+from agent.serveur_voix import couper_phrases, nettoyer_pour_voix
 from agent.moteurs import Reechantillonneur
-from agent.serveur_voix import MOTEURS
 
+from . import ollama_audio
 from .audio import Combine
+from .phrases import DecoupeurPhrases
 from .reglages import Reglages
 
 log = logging.getLogger("alloia.appel")
 
 OUTILS = [
-    gradbot.ToolDef(
-        "raccrocher",
-        "Termine l'appel. À utiliser après avoir remercié la personne, quand elle a fini de "
-        "raconter son projet ou qu'elle dit au revoir.",
-        json.dumps({"type": "object", "properties": {}, "required": []}),
-    ),
+    {
+        "type": "function",
+        "function": {
+            "name": "raccrocher",
+            "description": "Termine l'appel. À utiliser après avoir remercié le maker, quand il a "
+            "fini de raconter son projet ou qu'il dit au revoir.",
+            "parameters": {"type": "object", "properties": {}},
+        },
+    }
 ]
 
+ADAPTATION_ORALE = """
+# Conversation téléphonique (règles de forme, prioritaires)
+- Tout ce que tu écris est lu à voix haute par une voix de synthèse : phrases courtes et
+  naturelles, pas de listes, pas de titres, pas d'émojis, pas de symboles, pas de Markdown.
+- Les messages du maker t'arrivent en audio. Réponds à ce qu'il dit : ne répète pas et ne
+  transcris pas ses paroles.
+- Les messages entre parenthèses ne viennent pas du maker : ce sont des indications sur l'appel.
+"""
+
+CONSIGNE_VOCALE = "(Message vocal du maker. Réponds-lui directement, sans répéter ses paroles.)"
+DECROCHE = "(Le maker vient de décrocher le combiné. Commence l'appel.)"
+RELANCE = "(Le maker ne dit plus rien depuis un moment. Relance-le gentiment, en une phrase.)"
+
 _AU_REVOIR = re.compile(r"\b(au revoir|bonne journée|bonne soirée|à plus tard|à bientôt|ciao)\b", re.I)
+_EMOJIS = re.compile("[\U0001F000-\U0001FAFF☀-➿]")
 
 
 @dataclasses.dataclass
@@ -46,22 +71,17 @@ class Conversation:
     echanges: list[Echange] = dataclasses.field(default_factory=list)
     raison_fin: str = ""
 
-    def ajouter(self, role: str, texte: str) -> None:
-        texte = texte.strip()
-        if not texte:
-            return
-        if self.echanges and self.echanges[-1].role == role:
-            joint = self.echanges[-1].texte + " " + texte
-            self.echanges[-1].texte = re.sub(r"\s+([,.…])", r"\1", joint)
-        else:
-            self.echanges.append(Echange(role, texte))
+    def ajouter(self, role: str, texte: str) -> Echange:
+        e = Echange(role, texte.strip())
+        self.echanges.append(e)
+        return e
 
     def maker_a_parle(self) -> bool:
-        return any(e.role == "maker" for e in self.echanges)
+        return any(e.role == "maker" and e.texte for e in self.echanges)
 
     def transcription(self) -> str:
         noms = {"maker": "Maker", "alloia": "AlloIA"}
-        return "\n".join(f"{noms[e.role]} : {e.texte}" for e in self.echanges)
+        return "\n".join(f"{noms[e.role]} : {e.texte}" for e in self.echanges if e.texte)
 
 
 # ---------------------------------------------------------------------------
@@ -69,14 +89,14 @@ class Conversation:
 # ---------------------------------------------------------------------------
 
 
-async def attendre_decroche(combine: Combine, duree_parole_s: float, evenement_clavier: asyncio.Event) -> str:
+async def attendre_decroche(
+    combine: Combine, detecteur, duree_parole_s: float, evenement_clavier: asyncio.Event
+) -> str:
     """Attend qu'on parle dans le combiné (ou qu'on appuie sur Entrée). Renvoie la cause."""
-    ecoute = MOTEURS["ecoute"]
-    detecteur = getattr(ecoute, "prob_parole", None)
     reech = Reechantillonneur(24000, 16000)
     reste = np.zeros(0, dtype=np.float32)
-    parole: list[float] = []  # instants des blocs de parole récents
-    if detecteur is not None and hasattr(detecteur, "reinitialiser"):
+    parole: list[float] = []
+    if hasattr(detecteur, "reinitialiser"):
         detecteur.reinitialiser()
     combine.vider_micro()
     while True:
@@ -86,8 +106,6 @@ async def attendre_decroche(combine: Combine, duree_parole_s: float, evenement_c
         try:
             trame = await asyncio.wait_for(combine.micro.get(), timeout=0.5)
         except asyncio.TimeoutError:
-            continue
-        if detecteur is None:
             continue
         reste = np.concatenate([reste, reech(trame)])
         maintenant = time.monotonic()
@@ -101,147 +119,201 @@ async def attendre_decroche(combine: Combine, duree_parole_s: float, evenement_c
 
 
 # ---------------------------------------------------------------------------
-# L'appel lui-même
+# L'appel
 # ---------------------------------------------------------------------------
 
 
 class Appel:
-    def __init__(self, r: Reglages, modele_llm: str, consignes: str):
+    def __init__(self, r: Reglages, consignes: str, voix, detecteur):
         self.r = r
-        self.modele_llm = modele_llm
-        self.consignes = consignes
+        self.systeme = consignes.strip() + "\n\n" + ADAPTATION_ORALE.strip()
+        self.voix = voix
+        self.detecteur = detecteur
+        self.historique: list[dict] = []  # messages texte (sans audio) des tours précédents
+        self.transcriptions: set[asyncio.Task] = set()
+        self.raccrocher = False
 
-    def config_session(self) -> gradbot.SessionConfig:
-        return gradbot.SessionConfig(
-            instructions=self.consignes,
-            language=gradbot.Lang.Fr,
-            tools=OUTILS,
-            assistant_speaks_first=True,
-            silence_timeout_s=self.r.relance_apres_s,
-            flush_duration_s=0.5,
-        )
+    # --------------------------------------------------------------- un tour
+
+    async def tour(self, combine: Combine, conv: Conversation, audio: np.ndarray | None,
+                   indication: str = "", fin_phrase: float | None = None) -> str:
+        """Envoie une phrase du maker (ou une indication) et dit la réponse."""
+        await self._attendre_transcriptions(10)
+        if audio is not None:
+            wav = ollama_audio.wav_16k(audio)
+            actuel = ollama_audio.message_vocal(wav, CONSIGNE_VOCALE)
+        else:
+            actuel = {"role": "user", "content": indication}
+        messages = [{"role": "system", "content": self.systeme}, *self.historique, actuel]
+
+        boucle = asyncio.get_running_loop()
+        file: asyncio.Queue = asyncio.Queue()
+        debut = time.monotonic()
+
+        def produire():
+            try:
+                for m in ollama_audio.discuter_en_flux(
+                    self.r.ollama_adresse, self.r.ollama_modele, messages, OUTILS,
+                    self.r.ollama_contexte, self.r.ollama_temperature, self.r.ollama_reflexion,
+                ):
+                    boucle.call_soon_threadsafe(file.put_nowait, m)
+            except Exception as exc:  # noqa: BLE001
+                boucle.call_soon_threadsafe(file.put_nowait, exc)
+            finally:
+                boucle.call_soon_threadsafe(file.put_nowait, None)
+
+        threading.Thread(target=produire, daemon=True).start()
+
+        reponse, tampon, premiere = "", "", True
+        premier_mot = premier_son = None
+        while True:
+            m = await file.get()
+            if isinstance(m, Exception):
+                log.error("Le cerveau n'a pas répondu : %s", m)
+                break
+            phrases: list[str] = []
+            if m is None:
+                if tampon.strip():
+                    phrases.append(tampon)
+                tampon = ""
+            elif "outil" in m:
+                if m["outil"] == "raccrocher":
+                    log.info("L'agent raccroche.")
+                    self.raccrocher = True
+            else:
+                if premier_mot is None:
+                    premier_mot = time.monotonic() - debut
+                    log.info("  réflexion : premier mot après %.1f s", premier_mot)
+                reponse += m["texte"]
+                tampon += m["texte"]
+                phrases, tampon = couper_phrases(tampon, premiere)
+            for p in phrases:
+                texte = _EMOJIS.sub("", nettoyer_pour_voix(p))
+                if not re.search(r"\w", texte):
+                    continue
+                premiere = False
+                delai = await self.voix.dire(texte, combine)
+                if premier_son is None:
+                    premier_son = time.monotonic()
+                    total = premier_son - (fin_phrase if fin_phrase else debut)
+                    log.info("  voix : premier son après %.1f s de synthèse (total : %.1f s)", delai, total)
+            if m is None:
+                break
+
+        reponse = _EMOJIS.sub("", reponse).strip()
+        # Historique en texte : la phrase du maker sera remplacée par sa transcription.
+        message_maker = {"role": "user", "content": indication or "(message vocal)"}
+        self.historique.append(message_maker)
+        self.historique.append({"role": "assistant", "content": reponse or "…"})
+        if audio is not None:
+            echange = conv.ajouter("maker", "")
+            self._lancer_transcription(wav, message_maker, echange)
+        conv.ajouter("alloia", reponse)
+        return reponse
+
+    def _lancer_transcription(self, wav: bytes, message: dict, echange: Echange) -> None:
+        async def tache():
+            t0 = time.monotonic()
+            try:
+                texte = await asyncio.to_thread(
+                    ollama_audio.transcrire, self.r.ollama_adresse, self.r.ollama_modele, wav
+                )
+            except Exception as exc:  # noqa: BLE001
+                log.warning("Transcription impossible : %s", exc)
+                texte = ""
+            message["content"] = texte or "(message vocal inaudible)"
+            echange.texte = texte
+            log.info("  maker (transcrit en %.1f s) : %s", time.monotonic() - t0, texte)
+
+        t = asyncio.create_task(tache())
+        self.transcriptions.add(t)
+        t.add_done_callback(self.transcriptions.discard)
+
+    async def _attendre_transcriptions(self, delai: float) -> None:
+        if self.transcriptions:
+            await asyncio.wait(set(self.transcriptions), timeout=delai)
+
+    # ------------------------------------------------------------ l'appel
 
     async def derouler(self, combine: Combine, evenement_clavier: asyncio.Event) -> Conversation:
+        r = self.r
         conv = Conversation(debut=datetime.datetime.now())
-        entree, sortie = await gradbot.run(
-            gradium_api_key="local",
-            gradium_base_url=f"http://127.0.0.1:{self.r.port}/api",
-            llm_base_url=f"{self.r.ollama_adresse}/v1",
-            llm_model_name=self.modele_llm,
-            llm_api_key="ollama",
-            session_config=self.config_session(),
-            input_format=gradbot.AudioFormat.Pcm,
-            output_format=gradbot.AudioFormat.Pcm,
-        )
+        decoupeur = DecoupeurPhrases(self.detecteur, pause_s=r.pause_s)
+        phrases: asyncio.Queue = asyncio.Queue()
         fin = asyncio.Event()
-        raccrocher_demande = asyncio.Event()
-        t_raccrocher = [0.0]
-        derniere_parole = [time.monotonic()]
-        au_revoir_entendu = [0.0]
         debut = time.monotonic()
+        derniere_parole = [time.monotonic()]
         combine.vider_micro()
-        chrono: dict[str, float] = {}
 
-        def ecoute_duree() -> float:
-            return getattr(MOTEURS["ecoute"], "derniere_duree_s", 0.0)
-
-        async def envoyer_micro():
-            silence = np.zeros(1920, dtype=np.float32)
+        async def ecouter():
             while not fin.is_set():
                 try:
                     trame = await asyncio.wait_for(combine.micro.get(), timeout=0.5)
                 except asyncio.TimeoutError:
                     continue
-                if self.r.micro_coupe_quand_agent_parle and combine.agent_parle():
-                    trame = silence  # l'agent ne doit pas s'entendre lui-même
-                pcm16 = (np.clip(trame, -1, 1) * 32767).astype("<i2").tobytes()
-                await entree.send_audio(pcm16)
-
-        async def recevoir():
-            while not fin.is_set():
-                msg = await sortie.receive()
-                if msg is None:
-                    break
-                t = msg.msg_type
-                if t == "audio" and msg.data:
-                    combine.jouer(bytes(msg.data))
-                elif t == "stt_text" and msg.text:
-                    if "fin_phrase" not in chrono:
-                        # Whisper livre la phrase ~pause s après votre dernier mot, puis transcrit.
-                        chrono["fin_phrase"] = time.monotonic() - self.r.pause_s - ecoute_duree()
-                    conv.ajouter("maker", msg.text)
+                if not accueil_fini.is_set():
+                    decoupeur.reinitialiser()  # « Allô ? » du décroché : on attend la salutation
+                    continue
+                if r.micro_coupe_quand_agent_parle and combine.agent_parle():
+                    continue  # l'agent ne doit pas s'entendre lui-même
+                for p in decoupeur.ajouter(trame):
                     derniere_parole[0] = time.monotonic()
-                    # « au revoir » dit après la première minute : l'appel se termine si
-                    # l'agent ne raccroche pas lui-même et que la personne ne reprend pas.
-                    # (les mots arrivent un par un : on regarde la fin de la phrase en cours)
-                    fin_phrase = conv.echanges[-1].texte[-60:]
-                    if _AU_REVOIR.search(fin_phrase) and time.monotonic() - debut > 60:
-                        au_revoir_entendu[0] = time.monotonic()
-                    else:
-                        au_revoir_entendu[0] = 0.0
-                elif t == "tts_text" and msg.text:
-                    conv.ajouter("alloia", gradbot.schemas.sanitize(msg.text))
-                elif t == "event" and msg.event is not None:
-                    ev = msg.event.event_type
-                    if ev == "interrupted":
-                        combine.vider_haut_parleur()
-                    # Mesure du temps de réponse, étape par étape (affichée dans le terminal).
-                    elif ev == "push_to_llm":
-                        chrono["llm"] = time.monotonic()
-                    elif ev == "first_word" and chrono.get("llm"):
-                        chrono["mot"] = time.monotonic()
-                        log.info("  réflexion : premier mot après %.1f s", chrono["mot"] - chrono["llm"])
-                    elif ev == "first_tts_audio" and chrono.get("llm"):
-                        log.info(
-                            "  voix : premier son après %.1f s (total depuis votre fin de phrase : %.1f s)",
-                            time.monotonic() - chrono.get("mot", chrono["llm"]),
-                            time.monotonic() - chrono.get("fin_phrase", chrono["llm"]),
-                        )
-                        chrono.clear()
-                elif t == "tool_call":
-                    outil = gradbot.ToolHandle(msg.tool_call_handle, msg.tool_call)
-                    if outil.name == "raccrocher":
-                        log.info("L'agent raccroche.")
-                        t_raccrocher[0] = time.monotonic()
-                        raccrocher_demande.set()
-                        await outil.send_json({"statut": "L'appel va se terminer."})
-                    else:
-                        await outil.send_error(f"Outil inconnu : {outil.name}")
-            fin.set()
+                    # La personne a fini de parler `pause_s` avant que la phrase soit livrée.
+                    phrases.put_nowait((p, time.monotonic() - r.pause_s))
 
-        async def surveiller():
-            while not fin.is_set():
-                await asyncio.sleep(0.25)
+        accueil_fini = asyncio.Event()
+        ecoute = asyncio.create_task(ecouter())
+        try:
+            await self.tour(combine, conv, None, DECROCHE)
+            while combine.agent_parle():  # on écoute à nouveau une fois la salutation dite
+                await asyncio.sleep(0.05)
+            accueil_fini.set()
+            relances = 0
+            derniere_activite = time.monotonic()
+            while True:
+                try:
+                    audio, fin_phrase = await asyncio.wait_for(phrases.get(), timeout=0.25)
+                except asyncio.TimeoutError:
+                    audio = None
                 maintenant = time.monotonic()
-                parle = combine.agent_parle()
-                if raccrocher_demande.is_set():
-                    # On laisse l'agent finir son « au revoir » (qui peut arriver juste après).
-                    a_parle_depuis = combine.hp.derniere_sortie > t_raccrocher[0]
-                    if not parle and (a_parle_depuis or maintenant - t_raccrocher[0] > 8):
-                        conv.raison_fin = "l'agent a raccroché"
-                        break
-                elif au_revoir_entendu[0] and maintenant - au_revoir_entendu[0] > 12 and not parle:
-                    conv.raison_fin = "au revoir"
+                if combine.agent_parle():
+                    derniere_activite = maintenant
+                if audio is not None:
+                    # Plusieurs phrases arrivées pendant la réflexion : on les regroupe.
+                    while not phrases.empty():
+                        suite, fin_phrase = phrases.get_nowait()
+                        audio = np.concatenate([audio, suite])
+                    relances = 0
+                    await self.tour(combine, conv, audio, fin_phrase=fin_phrase)
+                    derniere_activite = time.monotonic()
+                    continue
+                if self.raccrocher and not combine.agent_parle():
+                    conv.raison_fin = "l'agent a raccroché"
                     break
-                elif maintenant - derniere_parole[0] > self.r.fin_apres_silence_s and not parle:
-                    conv.raison_fin = "silence prolongé"
-                    break
-                elif maintenant - debut > self.r.duree_max_min * 60:
-                    conv.raison_fin = "durée maximale atteinte"
-                    break
-                elif evenement_clavier.is_set():
+                if evenement_clavier.is_set():
                     evenement_clavier.clear()
                     conv.raison_fin = "touche Entrée"
                     break
+                if maintenant - debut > r.duree_max_min * 60:
+                    conv.raison_fin = "durée maximale atteinte"
+                    break
+                if decoupeur.en_cours or combine.agent_parle():
+                    continue
+                dernier_maker = next((e.texte for e in reversed(conv.echanges) if e.role == "maker"), "")
+                if _AU_REVOIR.search(dernier_maker[-60:]) and maintenant - derniere_activite > 8:
+                    conv.raison_fin = "au revoir"
+                    break
+                if maintenant - derniere_parole[0] > r.fin_apres_silence_s:
+                    conv.raison_fin = "silence prolongé"
+                    break
+                if maintenant - derniere_activite > r.relance_apres_s and relances < 2:
+                    relances += 1
+                    await self.tour(combine, conv, None, RELANCE)
+                    derniere_activite = time.monotonic()
+        finally:
             fin.set()
-
-        taches = [asyncio.create_task(c) for c in (envoyer_micro(), recevoir(), surveiller())]
-        await fin.wait()
-        with contextlib.suppress(Exception):
-            await entree.close()
-        for tache in taches:
-            tache.cancel()
-        await asyncio.gather(*taches, return_exceptions=True)
-        combine.vider_haut_parleur()
-        log.info("Fin de l'appel (%s), %d échanges.", conv.raison_fin or "fin du flux", len(conv.echanges))
+            ecoute.cancel()
+            await self._attendre_transcriptions(30)
+            combine.vider_haut_parleur()
+        log.info("Fin de l'appel (%s), %d échanges.", conv.raison_fin, len(conv.echanges))
         return conv

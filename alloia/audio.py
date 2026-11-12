@@ -172,7 +172,11 @@ class CombineSimule(Combine):
     """Pour les tests : joue un « appelant » enregistré et capture la voix de l'agent."""
 
     def __init__(self, scenario: list[tuple[float, np.ndarray | None]]):
-        """`scenario` : liste de (attente en s, audio 24 kHz à « dire » ou None)."""
+        """`scenario` : liste de (attente, audio 24 kHz à « dire » ou None).
+
+        L'attente est un nombre de secondes, ou ("apres_agent", s) pour attendre
+        qu'AlloIA ait répondu puis s secondes.
+        """
         super().__init__()
         self.scenario = scenario
         self.sortie: list[np.ndarray] = []
@@ -187,6 +191,15 @@ class CombineSimule(Combine):
         async def micro():
             silence = np.zeros(TRAME_MICRO, dtype=np.float32)
             for attente, audio in self.scenario:
+                if isinstance(attente, tuple):  # ("apres_agent", s) : comme une vraie personne,
+                    a_parle, calme = False, 0.0  # on attend qu'AlloIA ait vraiment fini (3 s
+                    while not (a_parle and calme >= 3.0):  # de silence), puis s secondes
+                        parle = self.agent_parle()
+                        a_parle = a_parle or parle
+                        calme = 0.0 if parle else calme + 0.08
+                        self.micro.put_nowait(silence)
+                        await asyncio.sleep(0.08)
+                    attente = attente[1]
                 fin = time.monotonic() + attente
                 while time.monotonic() < fin:
                     self.micro.put_nowait(silence)

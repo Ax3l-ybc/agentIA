@@ -1,7 +1,8 @@
 # =====================================================================
 #  Réglages d'AlloIA (le téléphone de documentation du FabLab)
+#  Version « omni » : le modèle écoute directement la voix (sans Whisper).
 # =====================================================================
-#  Modifiez avec un éditeur de texte (par exemple : nano alloia.yaml).
+#  Modifiez avec un éditeur de texte (par exemple : gedit alloia.yaml).
 #  Gardez les apostrophes simples ' ' autour des textes.
 # =====================================================================
 
@@ -12,30 +13,40 @@ dossier_docs: '~/AlloIA/docs'
 mode_de_conduite: 'alloia_conduite.md'
 modele_doc: 'alloia_modele_doc.md'
 
-# --- Le « cerveau » (Ollama) -----------------------------------------
+# --- Le cerveau qui écoute (Ollama) ----------------------------------
 ollama:
   adresse: 'http://127.0.0.1:11434'
-  # Ministral 3 (3B) : le modèle de Mistral pour les petits appareils (environ 3 Go).
-  modele: 'ministral-3:3b'
+  # Modèle qui comprend directement l'audio :
+  #   gemma4:e2b -> Gemma 4 E2B de Google (environ 4,6 Go), conseillé
+  #   lfm3-omni  -> LFM3-Omni de Liquid AI (environ 2 Go), plus léger
+  modele: 'gemma4:e2b'
   taille_contexte: 8192
   temperature: 0.4
+  # Mode « réflexion » de Gemma 4 : plus lent, à laisser sur false au téléphone.
+  reflexion: false
 
-# --- L'écoute (Whisper) ----------------------------------------------
+# --- L'écoute --------------------------------------------------------
 ecoute:
-  # 'small' (bon compromis), 'base' (plus rapide, moins précis)
-  modele_whisper: 'small'
-  # Secondes de silence qui marquent la fin d'une phrase.
-  pause_fin_de_phrase_s: 0.9
+  # Secondes de silence qui marquent la fin d'une phrase. Plus court = réponses plus
+  # rapides, mais AlloIA risque de couper la parole à quelqu'un qui réfléchit.
+  pause_fin_de_phrase_s: 1.3
 
-# --- La voix (Phonon) ------------------------------------------------
+# --- La voix ---------------------------------------------------------
 voix:
+  # 'phonon' : voix Phonon de Gradium (rapide, sur le processeur, jeton Hugging Face requis)
+  # 'ollama' : voix d'un modèle Ollama qui sait parler (lfm3-omni)
+  moteur: 'phonon'
+  # Pour Phonon :
   modele: 'hf://gradium/phonon-40m-fr'
   # Voix françaises : Hélène, Tiphaine, Orianne, Ninon, Noémie, Coralie, Maëlys, Solène,
   # Lilou, Arnaud, Lucien, Augustin, Jules, Baptiste, Marius. Vide = voix par défaut.
   nom: 'Jules'
   vitesse: 0.0
+  # Pour une voix Ollama (moteur: 'ollama') :
+  modele_ollama: 'lfm3-omni'
+  voix_ollama: 'male-french'
 
-# Jeton Hugging Face (obligatoire au premier lancement pour télécharger la voix).
+# Jeton Hugging Face (obligatoire au premier lancement pour télécharger Phonon).
 jeton_huggingface: ''
 
 # --- Le combiné (carte son USB) --------------------------------------
@@ -44,9 +55,7 @@ audio:
   # La liste s'obtient avec : ./jetson/lancer.sh --lister-audio
   entree: ''
   sortie: ''
-  # Coupe le micro pendant que l'agent parle, pour qu'il ne s'entende pas lui-même
-  # (indispensable si le micro et le haut-parleur sont séparés). On ne peut alors pas
-  # couper la parole à l'agent.
+  # Coupe le micro pendant que l'agent parle, pour qu'il ne s'entende pas lui-même.
   couper_micro_quand_agent_parle: true
   # Volume de la voix (1.0 = normal).
   volume: 1.0
@@ -61,6 +70,3 @@ appel:
   fin_apres_silence_s: 60
   # Durée maximale d'un appel, en minutes.
   duree_max_min: 25
-
-# Port du serveur vocal local (interne à la carte).
-port: 8765

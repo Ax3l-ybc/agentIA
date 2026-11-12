@@ -1,6 +1,7 @@
-"""AlloIA : `python -m alloia` (lancé par jetson/lancer.sh).
+"""AlloIA (version « omni ») : `python -m alloia` (lancé par jetson/lancer.sh).
 
 Boucle : veille → quelqu'un parle dans le combiné → appel → documentation → veille.
+Le cerveau (Gemma 4 par défaut) écoute directement la voix ; Phonon ou Ollama parle.
 """
 
 from __future__ import annotations
@@ -15,11 +16,13 @@ import time
 
 log = logging.getLogger("alloia")
 
+# Versions minimales d'Ollama pour les modèles qui écoutent l'audio.
+VERSION_MINI = {"gemma4": (0, 30, 9), "lfm3": (0, 40, 13)}
+
 
 def configurer_journal() -> None:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s  %(message)s", datefmt="%H:%M:%S")
-    for bavard in ("httpx", "httpx2", "httpcore", "httpcore2", "huggingface_hub",
-                   "uvicorn.access", "faster_whisper"):
+    for bavard in ("httpx", "httpx2", "httpcore", "httpcore2", "huggingface_hub", "faster_whisper"):
         logging.getLogger(bavard).setLevel(logging.WARNING)
 
 
@@ -35,59 +38,63 @@ def ecouter_clavier(boucle: asyncio.AbstractEventLoop, evenement: asyncio.Event)
     threading.Thread(target=lire, daemon=True).start()
 
 
-async def demarrer_serveur_voix(port: int):
-    import fastapi
-    import uvicorn
+def preparer_cerveau(r) -> None:
+    """Vérifie Ollama, sa version et le modèle ; le télécharge et le charge en mémoire."""
+    from agent import ollama
 
-    from agent import serveur_voix
+    from . import ollama_audio
 
-    app = fastapi.FastAPI()
-    app.include_router(serveur_voix.routeur)
-    serveur = uvicorn.Server(
-        uvicorn.Config(
-            app, host="127.0.0.1", port=port, log_level="warning", lifespan="off",
-            ws_ping_interval=None, ws_ping_timeout=None,
+    ollama.verifier(r.ollama_adresse)
+    version = ollama_audio.version(r.ollama_adresse)
+    famille = r.ollama_modele.split(":")[0].rstrip("0123456789.-")
+    mini = next((v for k, v in VERSION_MINI.items() if r.ollama_modele.startswith(k)), None)
+    if mini and version < mini:
+        raise ollama.ErreurOllama(
+            f"Ollama {'.'.join(map(str, version))} est trop ancien pour {r.ollama_modele} "
+            f"(il faut {'.'.join(map(str, mini))} ou plus récent).\n"
+            "Mettez-le à jour avec : curl -fsSL https://ollama.com/install.sh | sh"
         )
-    )
-    tache = asyncio.create_task(serveur.serve())
-    while not serveur.started:
-        if tache.done():
-            tache.result()
-        await asyncio.sleep(0.05)
-    return serveur, tache
+    ollama.telecharger(r.ollama_adresse, r.ollama_modele)
+    caps = ollama_audio.capacites(r.ollama_adresse, r.ollama_modele)
+    if "audio" not in caps:
+        raise ollama.ErreurOllama(
+            f"Le modèle {r.ollama_modele} ne sait pas écouter l'audio ({famille}). "
+            "Choisissez gemma4:e2b ou lfm3-omni dans alloia.yaml."
+        )
+    log.info("Chargement du cerveau en mémoire…")
+    ollama.precharger(r.ollama_adresse, r.ollama_modele, r.ollama_contexte)
 
 
-def charger_moteurs(r) -> None:
-    from agent import moteurs, serveur_voix
+def preparer_voix(r):
+    from . import ollama_audio, voix
 
-    log.info("Chargement de l'écoute (Whisper « %s »)…", r.whisper_modele)
-    serveur_voix.MOTEURS["ecoute"] = moteurs.MoteurEcouteWhisper(
-        r.whisper_modele,
-        invite="FabLab, découpe laser, imprimante 3D, fraiseuse numérique, contreplaqué, PLA, Arduino",
-        pause_s=r.pause_s,
-    )
-    log.info("Chargement de la voix (Phonon)…")
-    serveur_voix.MOTEURS["voix"] = moteurs.MoteurVoix(r.voix_modele, r.voix_nom, r.voix_vitesse)
+    if r.voix_moteur == "ollama":
+        from agent import ollama
+
+        ollama.telecharger(r.ollama_adresse, r.voix_ollama_modele)
+        if "speech" not in ollama_audio.capacites(r.ollama_adresse, r.voix_ollama_modele):
+            raise ollama.ErreurOllama(f"Le modèle {r.voix_ollama_modele} ne sait pas parler.")
+        log.info("Voix : %s (%s), servie par Ollama.", r.voix_ollama_modele, r.voix_ollama_nom)
+        return voix.VoixOllama(r.ollama_adresse, r.voix_ollama_modele, r.voix_ollama_nom)
+    return voix.VoixPhonon(r.voix_modele, r.voix_nom, r.voix_vitesse)
 
 
-async def boucle_principale(r, combine, modele_llm: str) -> None:
+async def boucle_principale(r, combine, voix_agent, detecteur) -> None:
     from . import doc
     from .appel import Appel, attendre_decroche
 
-    consignes = r.mode_de_conduite.read_text(encoding="utf-8-sig")
-    modele_doc = r.modele_doc.read_text(encoding="utf-8-sig")
     clavier = asyncio.Event()
     ecouter_clavier(asyncio.get_running_loop(), clavier)
     redactions: set[asyncio.Task] = set()
 
     while True:
         log.info("=== En attente d'un appel : parlez dans le combiné (ou appuyez sur Entrée). ===")
-        cause = await attendre_decroche(combine, r.parole_pour_decrocher_s, clavier)
+        cause = await attendre_decroche(combine, detecteur, r.parole_pour_decrocher_s, clavier)
         log.info("Décroché (%s) : début de l'appel.", cause)
         # Le mode de conduite est relu à chaque appel : une modification s'applique tout de suite.
         consignes = r.mode_de_conduite.read_text(encoding="utf-8-sig")
         try:
-            conv = await Appel(r, modele_llm, consignes).derouler(combine, clavier)
+            conv = await Appel(r, consignes, voix_agent, detecteur).derouler(combine, clavier)
         except Exception:  # noqa: BLE001
             log.exception("L'appel s'est mal terminé")
             await asyncio.sleep(2)
@@ -95,8 +102,8 @@ async def boucle_principale(r, combine, modele_llm: str) -> None:
         modele_doc = r.modele_doc.read_text(encoding="utf-8-sig")
         tache = asyncio.create_task(
             asyncio.to_thread(
-                doc.rediger, conv, r.ollama_adresse, modele_llm, r.ollama_contexte,
-                modele_doc, r.dossier_docs,
+                doc.rediger, conv, r.ollama_adresse, r.ollama_modele, r.ollama_contexte,
+                modele_doc, r.dossier_docs, r.ollama_reflexion,
             )
         )
         redactions.add(tache)
@@ -106,10 +113,10 @@ async def boucle_principale(r, combine, modele_llm: str) -> None:
 
 async def principal(args) -> int:
     from agent import ollama
-    from agent.__main__ import premier_port_libre
     from agent.reglages import ErreurReglages
 
     from . import audio
+    from .phrases import detecteur_silero
     from .reglages import charger
 
     try:
@@ -127,51 +134,47 @@ async def principal(args) -> int:
             log.error("PROBLÈME DE SON :\n%s", exc)
             return 1
 
-    log.info("Étape 1/3 : le cerveau (Ollama, %s).", r.ollama_modele)
+    log.info("Étape 1/3 : le cerveau qui écoute (Ollama, %s).", r.ollama_modele)
     try:
-        modele = await asyncio.to_thread(
-            ollama.preparer, r.ollama_adresse, r.ollama_modele, r.ollama_contexte,
-            "alloia", r.ollama_temperature,
-        )
-        await asyncio.to_thread(ollama.precharger, r.ollama_adresse, modele)
+        await asyncio.to_thread(preparer_cerveau, r)
     except ollama.ErreurOllama as exc:
         log.error("PROBLÈME AVEC OLLAMA :\n%s", exc)
         return 1
-    log.info("Étape 2/3 : l'écoute et la voix.")
+
+    log.info("Étape 2/3 : la voix et le détecteur de parole.")
     try:
-        await asyncio.to_thread(charger_moteurs, r)
+        voix_agent = await asyncio.to_thread(preparer_voix, r)
+        detecteur = detecteur_silero()
+    except ollama.ErreurOllama as exc:
+        log.error("PROBLÈME AVEC LA VOIX :\n%s", exc)
+        return 1
     except Exception as exc:  # noqa: BLE001
         texte = str(exc)
         if any(m in texte for m in ("GatedRepo", "Authentication", "401", "403", "restricted")):
             log.error(
-                "TÉLÉCHARGEMENT DE LA VOIX REFUSÉ PAR HUGGING FACE.\n"
-                "%s\n"
+                "TÉLÉCHARGEMENT DE LA VOIX REFUSÉ PAR HUGGING FACE.\n%s\n"
                 "Vérifiez : 1) que vous avez accepté les conditions sur "
                 "https://huggingface.co/gradium/phonon-40m-fr (avec le même compte que le jeton) ;\n"
-                "2) que le jeton est bien écrit dans alloia.yaml, ligne « jeton_huggingface: »,"
-                " entre apostrophes.",
-                "Aucun jeton n'est indiqué dans alloia.yaml." if not r.jeton_hf
-                else "Un jeton est indiqué dans alloia.yaml, mais il n'a pas accès au modèle.",
+                "2) le jeton dans alloia.perso.yaml (ou alloia.yaml), ligne « jeton_huggingface: ».",
+                "Aucun jeton n'est indiqué." if not r.jeton_hf
+                else "Un jeton est indiqué, mais il n'a pas accès au modèle.",
             )
         else:
-            log.exception("Impossible de charger l'écoute ou la voix")
+            log.exception("Impossible de charger la voix")
         return 1
-    r.port = premier_port_libre(r.port) or r.port
-    serveur, _ = await demarrer_serveur_voix(r.port)
+
     log.info("Étape 3/3 : le combiné.")
     try:
         combine = audio.CombineUSB(r.audio_entree, r.audio_sortie, r.volume)
         await combine.demarrer()
     except RuntimeError as exc:
         log.error("PROBLÈME DE SON :\n%s", exc)
-        serveur.should_exit = True
         return 1
     log.info("Les documentations seront écrites dans %s", r.dossier_docs)
     try:
-        await boucle_principale(r, combine, modele)
+        await boucle_principale(r, combine, voix_agent, detecteur)
     finally:
         await combine.arreter()
-        serveur.should_exit = True
     return 0
 
 

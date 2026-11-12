@@ -1,8 +1,9 @@
-# Modules d'AlloIA sur la Jetson (Gradbot est compilé à part par installer.sh).
+# Modules d'AlloIA « omni » sur la Jetson. Le cerveau (Gemma 4) tourne dans Ollama.
+# faster-whisper n'est plus utilisé pour écouter : il fournit le détecteur de parole Silero.
 faster-whisper>=1.1
+onnxruntime
 ptts>=0.6.0
 fastapi
-uvicorn[standard]
 pyyaml
 numpy
 sounddevice
