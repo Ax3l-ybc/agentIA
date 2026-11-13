@@ -38,7 +38,29 @@ def ecouter_clavier(boucle: asyncio.AbstractEventLoop, evenement: asyncio.Event)
     threading.Thread(target=lire, daemon=True).start()
 
 
-def preparer_cerveau(r) -> None:
+def preparer_cerveau(r):
+    """Prépare le cerveau qui écoute. Renvoie (cerveau, processus llama.cpp ou None)."""
+    from .cerveau import CerveauLlamaCpp, CerveauOllama, lancer_serveur_llamacpp
+    from .reglages import DOSSIER_ALLOIA
+
+    if r.cerveau_moteur == "llamacpp":
+        processus = lancer_serveur_llamacpp(r, DOSSIER_ALLOIA / "llama-server.log")
+        cerveau = CerveauLlamaCpp(f"http://127.0.0.1:{r.llamacpp_port}", r.ollama_temperature)
+        try:
+            debut = time.monotonic()
+            cerveau.rediger([{"role": "user", "content": "Dis seulement : prêt."}])  # mise en route
+            log.info("Première réponse du cerveau en %.1f s.", time.monotonic() - debut)
+        except Exception:
+            processus.terminate()
+            raise
+        return cerveau, processus
+    preparer_ollama(r)
+    return CerveauOllama(
+        r.ollama_adresse, r.ollama_modele, r.ollama_contexte, r.ollama_temperature, r.ollama_reflexion
+    ), None
+
+
+def preparer_ollama(r) -> None:
     """Vérifie Ollama, sa version et le modèle ; le télécharge et le charge en mémoire."""
     from agent import ollama
 
@@ -79,7 +101,7 @@ def preparer_voix(r):
     return voix.VoixPhonon(r.voix_modele, r.voix_nom, r.voix_vitesse)
 
 
-async def boucle_principale(r, combine, voix_agent, detecteur) -> None:
+async def boucle_principale(r, combine, voix_agent, detecteur, cerveau) -> None:
     from . import doc
     from .appel import Appel, attendre_decroche
 
@@ -94,7 +116,7 @@ async def boucle_principale(r, combine, voix_agent, detecteur) -> None:
         # Le mode de conduite est relu à chaque appel : une modification s'applique tout de suite.
         consignes = r.mode_de_conduite.read_text(encoding="utf-8-sig")
         try:
-            conv = await Appel(r, consignes, voix_agent, detecteur).derouler(combine, clavier)
+            conv = await Appel(r, consignes, voix_agent, detecteur, cerveau).derouler(combine, clavier)
         except Exception:  # noqa: BLE001
             log.exception("L'appel s'est mal terminé")
             await asyncio.sleep(2)
@@ -103,7 +125,7 @@ async def boucle_principale(r, combine, voix_agent, detecteur) -> None:
         tache = asyncio.create_task(
             asyncio.to_thread(
                 doc.rediger, conv, r.ollama_adresse, r.ollama_modele, r.ollama_contexte,
-                modele_doc, r.dossier_docs, r.ollama_reflexion,
+                modele_doc, r.dossier_docs, r.ollama_reflexion, cerveau,
             )
         )
         redactions.add(tache)
@@ -134,12 +156,27 @@ async def principal(args) -> int:
             log.error("PROBLÈME DE SON :\n%s", exc)
             return 1
 
-    log.info("Étape 1/3 : le cerveau qui écoute (Ollama, %s).", r.ollama_modele)
+    if r.cerveau_moteur == "llamacpp":
+        log.info("Étape 1/3 : le cerveau qui écoute (Gemma 4 dans llama.cpp, %s).", r.llamacpp_modele.name)
+    else:
+        log.info("Étape 1/3 : le cerveau qui écoute (Ollama, %s).", r.ollama_modele)
     try:
-        await asyncio.to_thread(preparer_cerveau, r)
+        cerveau, processus = await asyncio.to_thread(preparer_cerveau, r)
     except ollama.ErreurOllama as exc:
-        log.error("PROBLÈME AVEC OLLAMA :\n%s", exc)
+        log.error("PROBLÈME AVEC LE CERVEAU :\n%s", exc)
         return 1
+    try:
+        return await suite(r, cerveau)
+    finally:
+        if processus is not None:
+            processus.terminate()
+
+
+async def suite(r, cerveau) -> int:
+    from agent import ollama
+
+    from . import audio
+    from .phrases import detecteur_silero
 
     log.info("Étape 2/3 : la voix et le détecteur de parole.")
     try:
@@ -172,7 +209,7 @@ async def principal(args) -> int:
         return 1
     log.info("Les documentations seront écrites dans %s", r.dossier_docs)
     try:
-        await boucle_principale(r, combine, voix_agent, detecteur)
+        await boucle_principale(r, combine, voix_agent, detecteur, cerveau)
     finally:
         await combine.arreter()
     return 0

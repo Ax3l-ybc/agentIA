@@ -73,6 +73,7 @@ def rediger(
     modele_doc: str,
     dossier: pathlib.Path,
     reflexion: bool | None = None,
+    cerveau=None,
 ) -> pathlib.Path | None:
     mots_maker = sum(len(e.texte.split()) for e in conv.echanges if e.role == "maker")
     if mots_maker < MOTS_MINIMUM:
@@ -80,16 +81,14 @@ def rediger(
         return None
     quand = conv.debut
     systeme = CONSIGNE.format(date=f"{quand:%Y-%m-%d}", modele=modele_doc)
-    reponse = ollama.discuter(
-        adresse,
-        modele_llm,
-        [
-            {"role": "system", "content": systeme},
-            {"role": "user", "content": "TRANSCRIPTION DE L'APPEL :\n" + conv.transcription()},
-        ],
-        contexte,
-        reflexion,
-    )
+    messages = [
+        {"role": "system", "content": systeme},
+        {"role": "user", "content": "TRANSCRIPTION DE L'APPEL :\n" + conv.transcription()},
+    ]
+    if cerveau is not None:  # llama.cpp ou Ollama (alloia/cerveau.py)
+        reponse = cerveau.rediger(messages)
+    else:
+        reponse = ollama.discuter(adresse, modele_llm, messages, contexte, reflexion)
     contenu = nettoyer(reponse)
     contenu += (
         "\n---\n\n<details><summary>Transcription de l'appel</summary>\n\n"

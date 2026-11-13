@@ -1,6 +1,6 @@
 # =====================================================================
 #  Réglages d'AlloIA (le téléphone de documentation du FabLab)
-#  Version « omni » : le modèle écoute directement la voix (sans Whisper).
+#  Version « rapide » : Gemma 4 écoute directement la voix, dans llama.cpp.
 # =====================================================================
 #  Modifiez avec un éditeur de texte (par exemple : gedit alloia.yaml).
 #  Gardez les apostrophes simples ' ' autour des textes.
@@ -13,7 +13,23 @@ dossier_docs: '~/AlloIA/docs'
 mode_de_conduite: 'alloia_conduite.md'
 modele_doc: 'alloia_modele_doc.md'
 
-# --- Le cerveau qui écoute (Ollama) ----------------------------------
+# --- Le cerveau qui écoute -------------------------------------------
+cerveau:
+  # 'llamacpp' : Gemma 4 E2B dans llama.cpp, sur la puce graphique (rapide, conseillé)
+  # 'ollama'   : le modèle de la partie « ollama » ci-dessous (plus lourd en mémoire)
+  moteur: 'llamacpp'
+  llamacpp:
+    # Fichiers installés par ./jetson/installer.sh (dans ~/AlloIA).
+    serveur: '~/AlloIA/llama.cpp/build/bin/llama-server'
+    # Q3_K_M : rapide et léger (2,4 Go). Pour un peu plus de finesse (et de mémoire) :
+    # '~/AlloIA/modeles/gemma-4-E2B-it-Q4_K_M.gguf' (à télécharger, voir le README).
+    modele: '~/AlloIA/modeles/gemma-4-E2B-it-Q3_K_M.gguf'
+    mmproj: '~/AlloIA/modeles/mmproj-F16.gguf'
+    # Mémoire de travail : 4096 suffit pour un appel ; plus = plus de mémoire utilisée.
+    taille_contexte: 4096
+    port: 8090
+
+# --- Ollama (seulement si cerveau > moteur: 'ollama') ----------------
 ollama:
   adresse: 'http://127.0.0.1:11434'
   # Modèle qui comprend directement l'audio :
@@ -34,7 +50,8 @@ ecoute:
 # --- La voix ---------------------------------------------------------
 voix:
   # 'phonon' : voix Phonon de Gradium (rapide, sur le processeur, jeton Hugging Face requis)
-  # 'ollama' : voix d'un modèle Ollama qui sait parler (lfm3-omni)
+  # 'ollama' : voix d'un modèle Ollama qui sait parler (lfm3-omni) ; demande qu'Ollama
+  #            tourne, ce qui prend de la mémoire : déconseillé sur la Jetson Orin Nano.
   moteur: 'phonon'
   # Pour Phonon :
   modele: 'hf://gradium/phonon-40m-fr'

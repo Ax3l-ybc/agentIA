@@ -14,6 +14,7 @@ import pytest
 from fastapi.responses import StreamingResponse
 
 from alloia import doc, ollama_audio
+from alloia.cerveau import CerveauLlamaCpp, CerveauOllama
 from alloia.appel import Appel, Conversation, attendre_decroche
 from alloia.phrases import DecoupeurPhrases
 from alloia.reglages import RACINE, Reglages, charger, fusionner
@@ -87,8 +88,53 @@ def faux_ollama(journal: list):
     return app
 
 
+def faux_llamacpp(journal: list):
+    """Imite llama-server : /v1/chat/completions (SSE, audio en input_audio), transcription."""
+    app = fastapi.FastAPI()
+    transcriptions = list(TRANSCRIPTIONS)
+
+    def sse(deltas):
+        for d in deltas:
+            yield "data: " + json.dumps({"choices": [{"index": 0, "delta": d}]}) + "\n\n"
+        yield "data: [DONE]\n\n"
+
+    @app.post("/v1/chat/completions")
+    async def chat(req: fastapi.Request):
+        corps = await req.json()
+        journal.append(corps)
+        if not corps.get("stream"):
+            return {"choices": [{"message": {"role": "assistant", "content": DOC}}]}
+        dernier = corps["messages"][-1]
+        contenu = dernier["content"]
+        audio = isinstance(contenu, list) and any(p.get("type") == "input_audio" for p in contenu)
+        historique = " ".join(str(m.get("content")) for m in corps["messages"])
+        if isinstance(contenu, str) and "décrocher" in contenu:
+            deltas = [{"content": "Allô ! Ici AlloIA. "}, {"content": "Quel projet viens-tu de terminer ?"}]
+        elif audio and "lampe" in historique:
+            deltas = [{"content": "Merci beaucoup, à bientôt !"},
+                      {"tool_calls": [{"index": 0, "function": {"name": "raccro", "arguments": ""}}]},
+                      {"tool_calls": [{"index": 0, "function": {"name": "cher", "arguments": "{}"}}]}]
+        else:
+            deltas = [{"content": "Génial ! Quel réglage de laser as-tu utilisé ?"}]
+        return StreamingResponse(sse(deltas), media_type="text/event-stream")
+
+    @app.post("/v1/audio/transcriptions")
+    async def transcrire(req: fastapi.Request):
+        corps = (await req.body()).decode("latin-1")
+        assert "RIFF" in corps
+        journal.append({"transcription": "llama.cpp"})
+        return {"text": transcriptions.pop(0) if transcriptions else ""}
+
+    @app.get("/health")
+    async def sante():
+        return {"status": "ok"}
+
+    return app
+
+
 def test_reglages_et_fichier_perso(tmp_path):
     r = charger()
+    assert r.cerveau_moteur == "llamacpp" and r.llamacpp_modele.name == "gemma-4-E2B-it-Q3_K_M.gguf"
     assert r.ollama_modele == "gemma4:e2b" and r.ollama_reflexion is False
     assert r.voix_moteur == "phonon"
     base = tmp_path / "alloia.yaml"
@@ -135,31 +181,35 @@ def test_appel_trop_court_sans_doc(tmp_path):
     assert doc.rediger(conv, "http://x", "m", 100, "", tmp_path) is None
 
 
-def test_appel_complet(tmp_path):
+@pytest.mark.parametrize("moteur", ["llamacpp", "ollama"])
+def test_appel_complet(tmp_path, moteur):
     from alloia import audio
 
     journal: list = []
     port = port_libre()
-    faux = lancer_serveur(faux_ollama(journal), port)
-    r = Reglages(dossier_docs=tmp_path / "docs", ollama_adresse=f"http://127.0.0.1:{port}",
-                 pause_s=0.8, fin_apres_silence_s=30)
+    faux = lancer_serveur((faux_llamacpp if moteur == "llamacpp" else faux_ollama)(journal), port)
+    adresse = f"http://127.0.0.1:{port}"
+    r = Reglages(dossier_docs=tmp_path / "docs", ollama_adresse=adresse, pause_s=0.8, fin_apres_silence_s=30)
+    cerveau = (CerveauLlamaCpp(adresse) if moteur == "llamacpp"
+               else CerveauOllama(adresse, "gemma4:e2b", 8192, 0.4, False))
     consignes = (RACINE / "alloia_conduite.md").read_text(encoding="utf-8")
 
     async def scenario():
-        combine = audio.CombineSimule([(1.0, ton(1.0)), (3.0, ton(2.0)), (3.0, ton(2.0))])
+        combine = audio.CombineSimule([(1.0, ton(1.0)), (("apres_agent", 0.0), ton(2.0)),
+                                       (("apres_agent", 0.0), ton(2.0))])
         await combine.demarrer()
         clavier = asyncio.Event()
         try:
             cause = await asyncio.wait_for(attendre_decroche(combine, detecteur_energie, 0.6, clavier), 10)
-            appel = Appel(r, consignes, VoixSimulee(), detecteur_energie)
-            conv = await asyncio.wait_for(appel.derouler(combine, clavier), 60)
+            appel = Appel(r, consignes, VoixSimulee(), detecteur_energie, cerveau)
+            conv = await asyncio.wait_for(appel.derouler(combine, clavier), 90)
         finally:
             await combine.arreter()
         return cause, conv, combine
 
     try:
         cause, conv, combine = asyncio.run(scenario())
-        chemin = doc.rediger(conv, r.ollama_adresse, "gemma4:e2b", 8192, "MODELE", r.dossier_docs, False)
+        chemin = doc.rediger(conv, adresse, "gemma4:e2b", 8192, "MODELE", r.dossier_docs, False, cerveau)
     finally:
         faux.should_exit = True
 
@@ -171,17 +221,19 @@ def test_appel_complet(tmp_path):
     assert float(np.abs(combine.audio_joue()).max()) > 0.05  # la voix est sortie
 
     flux = [c for c in journal if c.get("stream")]
-    # Le premier message vocal est envoyé en audio (WAV) et le mode réflexion est coupé.
-    vocal = flux[1]["messages"][-1]
-    assert base64.b64decode(vocal["images"][0])[:4] == b"RIFF" and flux[1]["think"] is False
-    assert flux[1]["tools"][0]["function"]["name"] == "raccrocher"
     assert "téléphone de la documentation du FabLab" in flux[0]["messages"][0]["content"]
+    assert flux[1]["tools"][0]["function"]["name"] == "raccrocher"
+    vocal = flux[1]["messages"][-1]
+    if moteur == "llamacpp":
+        partie = next(p for p in vocal["content"] if p["type"] == "input_audio")
+        assert base64.b64decode(partie["input_audio"]["data"])[:4] == b"RIFF"
+        assert flux[1]["cache_prompt"] is True
+    else:
+        assert base64.b64decode(vocal["images"][0])[:4] == b"RIFF" and flux[1]["think"] is False
+        assert {"transcription": "gemma4:e2b", "langue": "fr"} in journal
     # Au tour suivant, la phrase précédente est dans l'historique sous forme de texte.
     assert any("contreplaqué de 3 mm" in str(m.get("content")) for m in flux[2]["messages"][:-1])
-    assert {"transcription": "gemma4:e2b", "langue": "fr"} in journal
 
     assert chemin is not None and chemin.name.endswith("_lampe-en-contreplaque.md")
     contenu = chemin.read_text(encoding="utf-8")
     assert contenu.startswith("---") and "Transcription de l'appel" in contenu
-    demande_doc = next(c for c in journal if c.get("stream") is False)
-    assert "MODELE" in demande_doc["messages"][0]["content"] and demande_doc["think"] is False

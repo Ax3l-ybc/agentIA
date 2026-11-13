@@ -124,10 +124,11 @@ async def attendre_decroche(
 
 
 class Appel:
-    def __init__(self, r: Reglages, consignes: str, voix, detecteur):
+    def __init__(self, r: Reglages, consignes: str, voix, detecteur, cerveau):
         self.r = r
         self.systeme = consignes.strip() + "\n\n" + ADAPTATION_ORALE.strip()
         self.voix = voix
+        self.cerveau = cerveau  # CerveauLlamaCpp ou CerveauOllama (alloia/cerveau.py)
         self.detecteur = detecteur
         self.historique: list[dict] = []  # messages texte (sans audio) des tours précédents
         self.transcriptions: set[asyncio.Task] = set()
@@ -141,7 +142,7 @@ class Appel:
         await self._attendre_transcriptions(10)
         if audio is not None:
             wav = ollama_audio.wav_16k(audio)
-            actuel = ollama_audio.message_vocal(wav, CONSIGNE_VOCALE)
+            actuel = self.cerveau.message_vocal(wav, CONSIGNE_VOCALE)
         else:
             actuel = {"role": "user", "content": indication}
         messages = [{"role": "system", "content": self.systeme}, *self.historique, actuel]
@@ -152,10 +153,7 @@ class Appel:
 
         def produire():
             try:
-                for m in ollama_audio.discuter_en_flux(
-                    self.r.ollama_adresse, self.r.ollama_modele, messages, OUTILS,
-                    self.r.ollama_contexte, self.r.ollama_temperature, self.r.ollama_reflexion,
-                ):
+                for m in self.cerveau.discuter_en_flux(messages, OUTILS):
                     boucle.call_soon_threadsafe(file.put_nowait, m)
             except Exception as exc:  # noqa: BLE001
                 boucle.call_soon_threadsafe(file.put_nowait, exc)
@@ -215,9 +213,7 @@ class Appel:
         async def tache():
             t0 = time.monotonic()
             try:
-                texte = await asyncio.to_thread(
-                    ollama_audio.transcrire, self.r.ollama_adresse, self.r.ollama_modele, wav
-                )
+                texte = await asyncio.to_thread(self.cerveau.transcrire, wav)
             except Exception as exc:  # noqa: BLE001
                 log.warning("Transcription impossible : %s", exc)
                 texte = ""
@@ -300,7 +296,9 @@ class Appel:
                 if decoupeur.en_cours or combine.agent_parle():
                     continue
                 dernier_maker = next((e.texte for e in reversed(conv.echanges) if e.role == "maker"), "")
-                if _AU_REVOIR.search(dernier_maker[-60:]) and maintenant - derniere_activite > 8:
+                # Filet de sécurité si le modèle n'appelle pas « raccrocher » : un « au revoir »
+                # du maker termine l'appel quelques secondes après la dernière réponse.
+                if _AU_REVOIR.search(dernier_maker[-60:]) and maintenant - derniere_activite > 4:
                     conv.raison_fin = "au revoir"
                     break
                 if maintenant - derniere_parole[0] > r.fin_apres_silence_s:

@@ -12,6 +12,8 @@ from agent.reglages import ErreurReglages, reparer_apostrophes
 
 RACINE = pathlib.Path(__file__).resolve().parent.parent
 FICHIER_CONFIG = RACINE / "alloia.yaml"
+# Dossier des gros fichiers (llama.cpp compilé, modèles), hors du dépôt git.
+DOSSIER_ALLOIA = pathlib.Path(os.path.expanduser("~/AlloIA"))
 # Réglages personnels (jeton, carte son…) : jamais modifiés par les mises à jour (git pull).
 FICHIER_PERSO = RACINE / "alloia.perso.yaml"
 
@@ -21,6 +23,12 @@ class Reglages:
     dossier_docs: pathlib.Path
     mode_de_conduite: pathlib.Path = RACINE / "alloia_conduite.md"
     modele_doc: pathlib.Path = RACINE / "alloia_modele_doc.md"
+    cerveau_moteur: str = "llamacpp"  # "llamacpp" (rapide) ou "ollama"
+    llamacpp_serveur: pathlib.Path = DOSSIER_ALLOIA / "llama.cpp" / "build" / "bin" / "llama-server"
+    llamacpp_modele: pathlib.Path = DOSSIER_ALLOIA / "modeles" / "gemma-4-E2B-it-Q3_K_M.gguf"
+    llamacpp_mmproj: pathlib.Path = DOSSIER_ALLOIA / "modeles" / "mmproj-F16.gguf"
+    llamacpp_contexte: int = 4096
+    llamacpp_port: int = 8090
     ollama_adresse: str = "http://127.0.0.1:11434"
     ollama_modele: str = "gemma4:e2b"
     ollama_contexte: int = 8192
@@ -80,6 +88,8 @@ def charger(fichier: pathlib.Path = FICHIER_CONFIG, perso: pathlib.Path | None =
     if perso is not None and perso.exists():
         brut = fusionner(brut, lire_yaml(perso))
 
+    c = brut.get("cerveau") or {}
+    lc = c.get("llamacpp") or {}
     o = brut.get("ollama") or {}
     e = brut.get("ecoute") or {}
     v = brut.get("voix") or {}
@@ -95,6 +105,12 @@ def charger(fichier: pathlib.Path = FICHIER_CONFIG, perso: pathlib.Path | None =
         dossier_docs=d.dossier_docs,
         mode_de_conduite=_chemin(brut.get("mode_de_conduite"), d.mode_de_conduite),
         modele_doc=_chemin(brut.get("modele_doc"), d.modele_doc),
+        cerveau_moteur=str(c.get("moteur") or d.cerveau_moteur).lower(),
+        llamacpp_serveur=_chemin(lc.get("serveur"), d.llamacpp_serveur),
+        llamacpp_modele=_chemin(lc.get("modele"), d.llamacpp_modele),
+        llamacpp_mmproj=_chemin(lc.get("mmproj"), d.llamacpp_mmproj),
+        llamacpp_contexte=val(lc, "taille_contexte", d.llamacpp_contexte, int),
+        llamacpp_port=val(lc, "port", d.llamacpp_port, int),
         ollama_adresse=str(val(o, "adresse", d.ollama_adresse, str)).rstrip("/"),
         ollama_modele=val(o, "modele", d.ollama_modele, str),
         ollama_contexte=val(o, "taille_contexte", d.ollama_contexte, int),

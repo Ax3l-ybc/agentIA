@@ -1,4 +1,4 @@
-# AlloIA : le téléphone de documentation du FabLab (version « omni »)
+# AlloIA : le téléphone de documentation du FabLab (version « rapide »)
 
 Un maker vient de finir son projet. Il décroche le combiné posé près de la Jetson, et AlloIA
 lui pose des questions, avec un vrai intérêt, pour lui faire raconter **ce qu'il a fabriqué,
@@ -10,9 +10,11 @@ dans un fichier Markdown.
 - **Seul le texte est gardé** (documentation et transcription), jamais l'enregistrement audio.
   AlloIA le dit à chaque appel.
 
-> **Branche `AlloIA-omni`** : ici, le cerveau **écoute directement la voix** (Gemma 4 dans
-> Ollama), sans passer par une transcription Whisper. La branche `AlloIA` garde la version
-> précédente (Whisper + Ministral 3 + Gradbot).
+> **Branche `AlloIA-rapide`** : le cerveau **écoute directement la voix** (Gemma 4 E2B),
+> et tourne dans **llama.cpp** compilé pour la puce graphique de la Jetson, dans une version
+> compressée plus légère. C'est la version conçue pour répondre vite : la version Ollama
+> (`AlloIA-omni`) saturait la mémoire de la carte (8 Go) et répondait en 40 à 50 s.
+> La branche `AlloIA` garde la toute première version (Whisper + Ministral 3 + Gradbot).
 
 ---
 
@@ -26,7 +28,7 @@ dans un fichier Markdown.
 
 | Rôle | Logiciel | Où il tourne |
 |---|---|---|
-| Les oreilles **et** le cerveau | [Gemma 4 E2B](https://ollama.com/library/gemma4) de Google, dans [Ollama](https://ollama.com) : il écoute l'audio et répond | puce graphique de la Jetson |
+| Les oreilles **et** le cerveau | [Gemma 4 E2B](https://huggingface.co/unsloth/gemma-4-E2B-it-GGUF) de Google (version compressée Q3_K_M, 2,4 Go, + module audio 0,9 Go), dans [llama.cpp](https://github.com/ggml-org/llama.cpp) : il écoute l'audio et répond | puce graphique de la Jetson |
 | La bouche | [Phonon](https://huggingface.co/gradium/phonon-40m-fr) `phonon-40m-fr` de Gradium | processeur de la Jetson |
 | Le détecteur de parole | Silero (repère le début et la fin de vos phrases) | processeur de la Jetson |
 
@@ -50,45 +52,40 @@ Déroulement d'un appel :
 
 ---
 
-## Passer de la branche AlloIA à AlloIA-omni (si AlloIA est déjà installée)
+## Passer à la version rapide (si AlloIA-omni est déjà installée)
 
-Dans un terminal sur la Jetson, une commande à la fois :
-
-```bash
-cd ~/AlloIA-code
-```
+Vos réglages personnels (`alloia.perso.yaml`) sont conservés. Dans un terminal sur la Jetson :
 
 ```bash
-cp alloia.yaml ~/ancien-alloia.yaml && git checkout -- alloia.yaml
-```
-
-```bash
-git fetch origin && git checkout AlloIA-omni
+cd ~/AlloIA-code && git fetch origin && git checkout AlloIA-rapide
 ```
 
 ```bash
 ./jetson/installer.sh
 ```
 
-```bash
-.venv/bin/python jetson/garder_reglages.py ~/ancien-alloia.yaml
-```
+L'installation compile llama.cpp (30 à 60 minutes, une seule fois) et télécharge le modèle
+(3,3 Go). Elle **arrête Ollama**, qui n'est plus utilisé et garderait sinon un modèle en
+mémoire. Ensuite : `./jetson/lancer.sh`.
 
-La dernière commande recopie votre jeton Hugging Face, votre carte son et votre voix dans
-`alloia.perso.yaml` (voir plus bas). Ensuite : `./jetson/lancer.sh`.
+Depuis la toute première version (branche `AlloIA`), mettez d'abord vos réglages de côté :
+`cp alloia.yaml ~/ancien-alloia.yaml && git checkout -- alloia.yaml`, puis après l'installation
+`.venv/bin/python jetson/garder_reglages.py ~/ancien-alloia.yaml`.
 
 ## Première installation
 
 ```bash
-git clone -b AlloIA-omni https://github.com/Ax3l-ybc/agentIA.git ~/AlloIA-code
+git clone -b AlloIA-rapide https://github.com/Ax3l-ybc/agentIA.git ~/AlloIA-code
 ```
 
 ```bash
 cd ~/AlloIA-code && ./jetson/installer.sh
 ```
 
-Le script installe les outils nécessaires, la voix Phonon et le détecteur de parole, et
-installe ou **met à jour Ollama** (il faut la version 0.40.13 ou plus récente). Il demande
+Le script installe les outils nécessaires, la voix Phonon et le détecteur de parole,
+**compile llama.cpp** pour la puce graphique (30 à 60 minutes la première fois), télécharge
+Gemma 4 E2B (3,3 Go dans `~/AlloIA/modeles`) et arrête Ollama s'il est installé. Il autorise
+aussi AlloIA à vider le cache mémoire au lancement (voir « Mémoire de la carte »). Il demande
 votre mot de passe (celui de la session sur la Jetson). Il peut être relancé sans risque.
 
 ## Vos réglages personnels : `alloia.perso.yaml`
@@ -137,7 +134,7 @@ aux lignes `entree:` et `sortie:`. Puis testez :
 cd ~/AlloIA-code && ./jetson/lancer.sh
 ```
 
-Au premier lancement, AlloIA télécharge Gemma 4 E2B (environ 4,6 Go) et la voix. Quand le
+AlloIA démarre llama.cpp (le cerveau est prêt en quelques dizaines de secondes). Quand le
 terminal affiche **« En attente d'un appel »**, décrochez et dites « Allô ? ».
 Pour les essais, la touche **Entrée** décroche et raccroche aussi. Pour arrêter : **Ctrl + C**
 (attendez « Documentation enregistrée » si un appel vient de se terminer).
@@ -158,7 +155,11 @@ Pendant l'appel, le terminal affiche les temps de réponse :
   Relu à chaque appel : une modification s'applique tout de suite.
 - **`alloia_modele_doc.md`** : le modèle de la documentation produite.
 - **`alloia.yaml`** (ou mieux, `alloia.perso.yaml`) : les réglages.
-  - `ollama > modele` : `gemma4:e2b` (conseillé) ou `lfm3-omni` (plus léger, 2 Go).
+  - `cerveau > llamacpp > modele` : la version compressée de Gemma 4 E2B. Q3_K_M (défaut) est
+    la plus rapide ; pour un peu plus de finesse, téléchargez la Q4_K_M (2,9 Go) dans
+    `~/AlloIA/modeles` depuis [la page du modèle](https://huggingface.co/unsloth/gemma-4-E2B-it-GGUF)
+    et indiquez son nom.
+  - `cerveau > moteur` : `llamacpp` (conseillé) ou `ollama` (version précédente, plus lourde).
   - `ecoute > pause_fin_de_phrase_s` : plus court, AlloIA répond plus vite mais risque de
     couper la parole ; plus long, elle laisse le temps de réfléchir.
   - `voix > moteur` : `phonon` (conseillé) ou `ollama` (la voix de `lfm3-omni`, sans jeton
@@ -166,9 +167,14 @@ Pendant l'appel, le terminal affiche les temps de réponse :
 
 ## Mémoire de la carte
 
-La Jetson Orin Nano a 8 Go partagés entre le processeur et la puce graphique. AlloIA en
-utilise environ 5 Go. Si la carte manque de mémoire (lenteurs, arrêt brutal), désactivez
-le bureau graphique, qui occupe environ 1 Go :
+La Jetson Orin Nano a 7,4 Go utilisables, partagés entre le processeur et la puce graphique.
+**C'est la limite qui rendait AlloIA lente** : quand la mémoire déborde, la carte se sert du
+disque (« swap ») et tout ralentit énormément. La version rapide utilise environ 4 Go pour le
+cerveau, et vide le cache mémoire juste avant de le charger (la puce graphique de la Jetson
+ne sait pas récupérer cette mémoire toute seule).
+
+Pour vérifier pendant un appel : `free -h`. La ligne `Swap` doit rester proche de 0, et
+`available` au-dessus de 1 Go. Sinon, désactivez le bureau graphique, qui occupe environ 1 Go :
 
 ```bash
 sudo systemctl set-default multi-user.target
@@ -180,8 +186,10 @@ Puis redémarrez. Pour retrouver le bureau : `sudo systemctl set-default graphic
 
 | Ce que vous voyez | Que faire |
 |---|---|
-| « Ollama … est trop ancien » | `curl -fsSL https://ollama.com/install.sh \| sh`, puis relancez. |
-| « Ollama ne répond pas » | `sudo systemctl restart ollama`, puis relancez. |
+| « llama.cpp s'est arrêté au démarrage » | Lisez la fin du journal affichée ; souvent la mémoire : fermez les autres programmes, ou passez sans bureau graphique. |
+| « Fichier introuvable pour le modèle » | Relancez `./jetson/installer.sh` (le téléchargement reprend où il s'était arrêté). |
+| « Ollama tourne encore » | `sudo systemctl stop ollama` (l'installation le désactive normalement). |
+| Réponses lentes | `free -h` pendant un appel : si `Swap` est utilisé, voir « Mémoire de la carte ». |
 | « Aucun micro ou haut-parleur utilisable » | Vérifiez la carte son avec `arecord -l` et `aplay -l`, puis son nom dans `alloia.perso.yaml`. |
 | « Téléchargement de la voix refusé par Hugging Face » | Acceptez les conditions de Phonon et vérifiez le jeton dans `alloia.perso.yaml`. |
 | AlloIA coupe la personne trop tôt | Augmentez `pause_fin_de_phrase_s` (par exemple `1.8`). |
@@ -199,6 +207,7 @@ alloia_modele_doc.md   modèle de la documentation
 alloia/
   __main__.py          boucle : attente → appel → documentation
   appel.py             un appel : tours de parole, relances, fin d'appel, transcription
+  cerveau.py           le cerveau qui écoute : llama.cpp (lancé par AlloIA) ou Ollama
   ollama_audio.py      Ollama : conversation avec audio, transcription, synthèse vocale
   phrases.py           découpe du micro en phrases (Silero)
   voix.py              voix Phonon ou Ollama
@@ -207,7 +216,7 @@ alloia/
   reglages.py          lecture des réglages
 agent/                 briques partagées avec le directeur de mémoire (Phonon, Ollama…)
 jetson/                installation, lancement, reprise des réglages
-tests/                 tests automatiques (combiné simulé, faux Ollama)
+tests/                 tests automatiques (combiné simulé, faux llama.cpp et faux Ollama)
 ```
 
 **Licences** : le code est libre. Phonon 40M est sous licence CC BY-NC 4.0 (usage non
