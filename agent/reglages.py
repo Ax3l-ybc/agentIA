@@ -17,24 +17,34 @@ class ErreurReglages(Exception):
     """Erreur de configuration, avec un message lisible par un non-codeur."""
 
 
+# Dossier des gros fichiers (modèle Gemma 4), hors du dossier du projet : il survit
+# quand on remplace le projet par une nouvelle version.
+DOSSIER_DONNEES = pathlib.Path(os.path.expanduser("~")) / "DirecteurMemoire"
+MODELE_PAR_DEFAUT = "gemma-4-E2B-it-Q4_K_M.gguf"
+MMPROJ_PAR_DEFAUT = "mmproj-F16.gguf"
+
+
 @dataclasses.dataclass
 class Reglages:
     dossier_notes: pathlib.Path
     dossier_recaps: pathlib.Path
     sujet_memoire: str = ""
-    ollama_adresse: str = "http://127.0.0.1:11434"
-    ollama_modele: str = "qwen2.5:7b"
-    ollama_contexte: int = 16384
+    # Le cerveau qui écoute : Gemma 4 E2B dans llama.cpp
+    llamacpp_serveur: str = ""  # vide : trouvé automatiquement (installé par winget)
+    llamacpp_modele: pathlib.Path = DOSSIER_DONNEES / "modeles" / MODELE_PAR_DEFAUT
+    llamacpp_mmproj: pathlib.Path = DOSSIER_DONNEES / "modeles" / MMPROJ_PAR_DEFAUT
+    llamacpp_contexte: int = 16384
+    llamacpp_couches_gpu: int = 0  # 0 = tout sur le processeur
+    llamacpp_port: int = 8090
+    temperature: float = 0.6
+    # La voix
     voix_modele: str = "hf://gradium/phonon-40m-fr"
     voix_nom: str = ""
     voix_vitesse: float = 0.0
-    stt_modele: str = "kyutai/stt-1b-en_fr-candle"
-    stt_moteur: str = "auto"  # auto, kyutai ou whisper
-    whisper_modele: str = "small"
-    whisper_pause_s: float = 0.8
     jeton_hf: str = ""
-    materiel: str = "auto"
-    silence_relance_s: float = 15.0
+    # La conversation
+    pause_s: float = 1.2
+    silence_relance_s: float = 20.0
     seuil_notes_entieres: int = 20000
     port: int = 8000
     mode_de_conduite: pathlib.Path | None = None  # fichier du prompt de l'agent
@@ -93,35 +103,40 @@ def charger(fichier: pathlib.Path = FICHIER_CONFIG) -> Reglages:
                 f"Détail : {exc}"
             ) from exc
 
-    ollama = brut.get("ollama") or {}
+    cerveau = brut.get("cerveau") or {}
     voix = brut.get("voix") or {}
-    transcription = brut.get("transcription") or {}
     conversation = brut.get("conversation") or {}
+    d = Reglages(dossier_notes=pathlib.Path("."), dossier_recaps=pathlib.Path("."))
 
+    def val(dico, cle, defaut, conv):
+        x = dico.get(cle)
+        return defaut if x is None or x == "" else conv(x)
+
+    def fichier_modele(valeur, defaut: pathlib.Path) -> pathlib.Path:
+        if not isinstance(valeur, str) or not valeur.strip():
+            return defaut
+        p = pathlib.Path(os.path.expandvars(os.path.expanduser(valeur.strip())))
+        return p if p.is_absolute() else DOSSIER_DONNEES / "modeles" / p
+
+    # Les anciens réglages (ollama, transcription, materiel…) sont simplement ignorés.
     r = Reglages(
         dossier_notes=_chemin(brut.get("dossier_notes"), "dossier_notes"),
         dossier_recaps=_chemin(brut.get("dossier_recaps"), "dossier_recaps"),
         sujet_memoire=str(brut.get("sujet_memoire") or "").strip(),
-        ollama_adresse=str(ollama.get("adresse") or Reglages.ollama_adresse).rstrip("/"),
-        ollama_modele=str(ollama.get("modele") or Reglages.ollama_modele),
-        ollama_contexte=int(ollama.get("taille_contexte") or Reglages.ollama_contexte),
-        voix_modele=str(voix.get("modele") or Reglages.voix_modele),
+        llamacpp_serveur=str(cerveau.get("serveur") or "").strip(),
+        llamacpp_modele=fichier_modele(cerveau.get("modele"), d.llamacpp_modele),
+        llamacpp_mmproj=fichier_modele(cerveau.get("module_audio"), d.llamacpp_mmproj),
+        llamacpp_contexte=val(cerveau, "taille_contexte", d.llamacpp_contexte, int),
+        llamacpp_couches_gpu=val(cerveau, "couches_gpu", d.llamacpp_couches_gpu, int),
+        llamacpp_port=val(cerveau, "port", d.llamacpp_port, int),
+        temperature=val(cerveau, "temperature", d.temperature, float),
+        voix_modele=val(voix, "modele", d.voix_modele, str),
         voix_nom=str(voix.get("nom") or "").strip(),
-        voix_vitesse=float(voix.get("vitesse") or 0.0),
-        stt_modele=str(transcription.get("modele") or Reglages.stt_modele),
-        stt_moteur=str(transcription.get("moteur") or "auto").lower(),
-        whisper_modele=str(transcription.get("modele_whisper") or Reglages.whisper_modele),
-        whisper_pause_s=float(transcription.get("pause_fin_de_phrase_s") or Reglages.whisper_pause_s),
+        voix_vitesse=val(voix, "vitesse", 0.0, float),
         jeton_hf=str(brut.get("jeton_huggingface") or "").strip(),
-        materiel=str(brut.get("materiel") or "auto").lower(),
-        silence_relance_s=float(
-            conversation.get("silence_avant_relance_s") or Reglages.silence_relance_s
-        ),
-        seuil_notes_entieres=int(
-            conversation.get("notes_en_entier_si_moins_de")
-            if conversation.get("notes_en_entier_si_moins_de") is not None
-            else Reglages.seuil_notes_entieres
-        ),
+        pause_s=val(conversation, "pause_fin_de_phrase_s", d.pause_s, float),
+        silence_relance_s=val(conversation, "silence_avant_relance_s", d.silence_relance_s, float),
+        seuil_notes_entieres=val(conversation, "notes_en_entier_si_moins_de", d.seuil_notes_entieres, int),
         port=int(brut.get("port") or 8000),
         mode_de_conduite=_chemin_mode(brut.get("mode_de_conduite")),
     )

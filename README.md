@@ -14,13 +14,12 @@ Quand vous le lui demandez, il écrit une **fiche récapitulative de la séance*
 
 ## Ce qu'il vous faut
 
-- Un PC sous **Windows 10 ou 11**, avec **24 Go de mémoire vive** (RAM) au minimum pour Mistral Small (16 Go suffisent avec le modèle plus léger `qwen2.5:7b`).
-- Environ **30 Go d'espace libre** sur le disque.
-- Un **micro**. Un **casque** est conseillé : sinon l'agent risque de s'entendre parler.
-- Une **carte graphique NVIDIA** (GeForce RTX avec au moins 8 Go de mémoire, par exemple)
-  pour la meilleure expérience : l'agent vous écoute alors en continu avec Kyutai STT.
-  **Sans carte NVIDIA, l'agent fonctionne aussi** : il utilise automatiquement Whisper, qui
-  comprend chaque phrase après une courte pause. Il répond alors quelques secondes après vous.
+- Un PC sous **Windows 10 ou 11**, avec **16 Go de mémoire vive** (RAM) conseillés (8 Go au minimum).
+- Environ **8 Go d'espace libre** sur le disque.
+- Un **micro**. Un **casque** est conseillé ; sans casque, le micro est coupé pendant que le
+  directeur parle, pour qu'il ne s'entende pas lui-même.
+- **Pas besoin de carte graphique** : tout tourne sur le processeur. Le directeur répond
+  quelques secondes après la fin de votre phrase (plus vite sur un PC récent).
 - Une connexion internet **pour l'installation et le premier lancement seulement**.
 
 ---
@@ -36,12 +35,16 @@ Quand vous le lui demandez, il écrit une **fiche récapitulative de la séance*
 1. Ouvrez le dossier, puis **double-cliquez sur `installer.bat`**.
 2. Si Windows affiche « Windows a protégé votre ordinateur », cliquez sur
    **Informations complémentaires**, puis sur **Exécuter quand même**.
-3. Attendez le message **« Installation terminée ! »**. Cela prend 10 à 20 minutes.
+3. Attendez le message **« Installation terminée ! »**. Cela prend 10 à 30 minutes.
 
-L'installation met en place Python, les modules nécessaires et
-[Ollama](https://ollama.com), le programme qui fait tourner le « cerveau » de l'agent.
-Si Ollama ne s'installe pas tout seul, téléchargez-le sur
-[ollama.com/download](https://ollama.com/download), installez-le, puis relancez `installer.bat`.
+L'installation met en place Python, les modules nécessaires, **llama.cpp** (le programme qui
+fait tourner le « cerveau ») et télécharge le cerveau lui-même, **Gemma 4 E2B** (environ 3,8 Go,
+rangé dans `C:\Users\VotreNom\DirecteurMemoire\modeles`). **Ollama n'est plus utilisé** :
+vous pouvez le quitter (icône près de l'horloge) ou le désinstaller.
+
+**Mise à jour depuis une version précédente** : remplacez les fichiers par ceux du nouveau ZIP,
+**remettez votre `config.yaml`** (vos dossiers, votre sujet et votre jeton restent valables ;
+les anciens réglages Ollama et Whisper sont simplement ignorés), puis relancez `installer.bat`.
 
 ## Étape 3 : obtenir l'accès à la voix (gratuit, une seule fois)
 
@@ -84,13 +87,15 @@ Enregistrez le fichier (**Ctrl + S**) et fermez le Bloc-notes.
 
 1. **Double-cliquez sur `lancer.bat`.** Une fenêtre noire s'ouvre : laissez-la ouverte
    pendant toute la séance.
-2. **Au premier lancement**, l'agent télécharge son cerveau, son écoute et sa voix
-   (environ 18 Go). Cela peut prendre un moment. Les lancements suivants sont rapides.
-3. Quand la fenêtre affiche **« Prêt ! »**, la page de l'agent s'ouvre dans votre navigateur
+2. Le directeur **démarre son cerveau, puis lit vos consignes, vos notes et vos fiches**
+   (une à deux minutes). C'est fait une fois au lancement : ensuite, chaque séance commence
+   tout de suite.
+3. Quand la fenêtre affiche **« Prêt ! »**, la page de l'agent s'ouvre dans votre navigateur.
    L'adresse est affichée dans la fenêtre, en général <http://127.0.0.1:8000>.
 4. Cliquez sur le **bouton micro** et **autorisez l'accès au micro** si le navigateur le demande.
-5. Le directeur vous salue et vous pose une première question. **Répondez simplement à voix haute.**
-   Vous pouvez lui couper la parole.
+5. Le directeur vous salue et vous pose une première question. **Répondez simplement à voix haute**,
+   puis marquez une courte pause : c'est ce qui lui indique que vous avez fini votre phrase.
+   Pendant qu'il parle, il ne vous entend pas : attendez « Je vous écoute ».
 
 ### Obtenir la fiche de séance
 
@@ -121,12 +126,12 @@ Pour quitter complètement, **fermez la fenêtre noire**.
 | « Le dossier des notes n'existe pas » | Vérifiez le chemin `dossier_notes` dans `config.yaml`, avec ses apostrophes `' '`. |
 | « config.yaml est mal écrit » | Vérifiez que chaque chemin est entre apostrophes `' '` et que vous n'avez pas supprimé d'espaces en début de ligne. |
 | « Téléchargement refusé par Hugging Face » | Refaites l'étape 3 : acceptez les conditions du modèle et recopiez le jeton. |
-| « Ollama ne répond pas » | Lancez **Ollama** depuis le menu Démarrer, puis relancez `lancer.bat`. |
+| « llama.cpp est introuvable » | Relancez `installer.bat`, puis fermez et rouvrez `lancer.bat`. Voir aussi « Si llama.cpp ne s'installe pas » plus bas. |
+| « Fichier introuvable pour le modèle » | Relancez `installer.bat` : le téléchargement de Gemma 4 reprend où il s'était arrêté. |
 | L'agent ne vous entend pas | Autorisez le micro dans le navigateur (icône à gauche de l'adresse) et vérifiez le micro choisi dans Windows. |
-| L'agent se coupe ou se répond à lui-même | Utilisez un casque, ou laissez la case **Anti-écho** cochée. |
-| Les réponses sont lentes | La fenêtre noire indique combien de temps prend chaque transcription (« Transcrit en 2.1 s »). Si c'est l'écoute qui est lente, gardez `modele_whisper: 'small'`. Si c'est la réflexion, essayez un cerveau plus léger dans `config.yaml` : `modele: 'qwen2.5:3b'`. |
-| « L'écoute a 40 s de retard » | Vous utilisez Kyutai sans carte NVIDIA : mettez `moteur: 'whisper'` (ou `'auto'`) dans la partie `transcription:` de `config.yaml`. |
-| L'agent répond alors que vous n'aviez pas fini | Avec Whisper, une pause de 0,8 s marque la fin de votre phrase. Si l'agent vous coupe pendant que vous réfléchissez, augmentez `pause_fin_de_phrase_s` (par exemple `1.5`) dans `config.yaml`. Vous pouvez aussi simplement reprendre la parole : il s'arrête quand il vous entend. |
+| L'agent se répond à lui-même | Utilisez un casque, ou baissez le volume des haut-parleurs. |
+| Les réponses sont lentes | La fenêtre noire affiche « réflexion : premier mot après … s ». Fermez les programmes gourmands ; dans `config.yaml`, vous pouvez essayer `modele: 'gemma-4-E2B-it-Q3_K_M.gguf'` (plus léger : à télécharger avec `.venv\Scripts\python.exe -m agent.telecharger gemma-4-E2B-it-Q3_K_M.gguf`). |
+| L'agent répond alors que vous n'aviez pas fini | Une pause de 1,2 s marque la fin de votre phrase. Augmentez `pause_fin_de_phrase_s` (par exemple `1.8`) dans la partie `conversation:` de `config.yaml`. |
 | La page ne s'ouvre pas toute seule | Copiez dans Chrome ou Edge l'adresse affichée sur la ligne « Prêt ! » (en général <http://127.0.0.1:8000>), sans fermer la fenêtre noire. |
 | « Le port 8000 est déjà pris » | Rien à faire : l'agent prend un autre port. Fermez quand même les anciennes fenêtres noires de l'agent. |
 
@@ -137,10 +142,21 @@ Pour quitter complètement, **fermez la fenêtre noire**.
   Voix masculines : Arnaud (grave, direct), Lucien (posé), Augustin, Jules, Baptiste, Marius.
   La voix est téléchargée (quelques Ko) au lancement suivant.
 - **`voix > vitesse`** : `-0.2` pour parler plus vite, `0.2` pour parler plus lentement.
-- **`ollama > modele`** : le cerveau. Par défaut `mistral-small3.2` (Mistral Small 3.2, environ
-  15 Go, très bon en français). Il demande au moins 24 Go de mémoire vive (32 conseillés) et
-  répond lentement sans carte graphique. `qwen2.5:7b` est plus léger et plus rapide.
+- **`cerveau > modele`** : la version de Gemma 4 E2B. `gemma-4-E2B-it-Q4_K_M.gguf` par défaut ;
+  `gemma-4-E2B-it-Q3_K_M.gguf` est un peu plus rapide et un peu moins fin.
+- **`conversation > pause_fin_de_phrase_s`** : la pause qui marque la fin de votre phrase.
 - **`conversation > silence_avant_relance_s`** : le nombre de secondes de silence avant que l'agent vous relance.
+
+---
+
+### Si llama.cpp ne s'installe pas
+
+`installer.bat` l'installe avec la commande Windows `winget install llama.cpp`. Si `winget`
+n'est pas disponible sur votre PC, téléchargez llama.cpp pour Windows sur
+[github.com/ggml-org/llama.cpp/releases](https://github.com/ggml-org/llama.cpp/releases)
+(fichier dont le nom contient `bin-win-cpu-x64.zip`), extrayez-le, puis indiquez l'emplacement
+de `llama-server.exe` dans `config.yaml`, partie `cerveau:` :
+`serveur: 'C:\chemin\vers\llama-server.exe'`.
 
 ---
 
@@ -155,38 +171,40 @@ Pour quitter complètement, **fermez la fenêtre noire**.
 
 ## Pour les curieux : comment ça marche
 
-L'agent est construit sur [Gradbot](https://github.com/gradium-ai/gradbot), un cadre open source
-pour agents vocaux. Gradbot coordonne trois éléments :
+Le directeur fonctionne comme le téléphone AlloIA sur la carte Jetson :
 
-- **les oreilles** : [Kyutai STT](https://github.com/kyutai-labs/delayed-streams-modeling)
-  (`kyutai/stt-1b-en_fr`) avec une carte NVIDIA. Il transcrit en continu et détecte quand vous
-  avez fini de parler. Sans carte NVIDIA : [Whisper](https://github.com/SYSTRAN/faster-whisper)
-  (`small`), avec le détecteur de parole Silero, qui transcrit chaque phrase après une pause ;
-- **le cerveau** : un modèle de langage qui tourne dans [Ollama](https://ollama.com) ;
-- **la bouche** : [Phonon](https://huggingface.co/gradium/phonon-40m-fr) de Gradium (`phonon-40m-fr`).
+- **les oreilles et le cerveau** : [Gemma 4 E2B](https://huggingface.co/unsloth/gemma-4-E2B-it-GGUF)
+  de Google, dans [llama.cpp](https://github.com/ggml-org/llama.cpp). Il **écoute directement
+  votre voix** : chaque phrase lui est envoyée telle quelle, sans transcription préalable ;
+- **la bouche** : [Phonon](https://huggingface.co/gradium/phonon-40m-fr) de Gradium (`phonon-40m-fr`) ;
+- **le détecteur de parole** : Silero, qui repère la fin de vos phrases.
 
-Normalement, Gradbot utilise les services en ligne de Gradium pour l'écoute et la voix.
-Ici, un petit serveur local (`agent/serveur_voix.py`) parle le même langage que ces services,
-mais il fait tout le travail sur votre PC avec Kyutai STT (ou Whisper) et Phonon.
+Pour que les réponses soient rapides sur un simple processeur, llama.cpp garde en mémoire
+vos consignes, vos notes et vos fiches d'un tour à l'autre (il ne les relit pas à chaque
+phrase). Il a deux « espaces » : l'un pour la conversation, l'autre pour retranscrire vos
+phrases (pour l'historique et la fiche) et rédiger la fiche, sans effacer le premier.
 
 Organisation des fichiers :
 
 ```
 config.yaml           vos réglages
 mode_de_conduite.md   le comportement de l'agent (votre prompt)
-installer.bat         installation
+installer.bat         installation (Python, llama.cpp, Gemma 4)
 lancer.bat            lancement
 agent/
-  application.py      la séance vocale, les outils de l'agent et les fiches
+  __main__.py         démarrage : cerveau, voix, lecture des consignes, page web
+  cerveau.py          Gemma 4 dans llama.cpp (lancé par l'agent)
+  seance.py           une séance à la voix avec la page web
+  application.py      les outils de l'agent (notes, fiches) et la fiche de séance
   consignes.py        le mode de conduite, l'adaptation à l'oral et la fiche
   coffre.py           la lecture des notes (lecture seule) et l'écriture des fiches
-  serveur_voix.py     l'écoute et la voix en local (protocole Gradium)
-  moteurs.py          Kyutai STT, Whisper et Phonon
-  ollama.py           la communication avec Ollama
-  static/index.html   la page web
+  phrases.py          découpe de votre voix en phrases (Silero)
+  moteurs.py          la voix Phonon et le détecteur de parole
+  telecharger.py      téléchargement de Gemma 4
+  static/index.html   la page web (micro, voix, conversation)
 tests/                les tests automatiques (pour les développeurs, avec pytest)
 ```
 
-**Licences** : le code de ce projet et Gradbot sont libres. Le modèle de voix
+**Licences** : le code de ce projet est libre. Le modèle de voix
 Phonon 40M est publié sous licence **CC BY-NC 4.0** : il est gratuit pour un usage
 personnel, mais **pas pour un usage commercial**.

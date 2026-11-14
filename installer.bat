@@ -5,14 +5,14 @@ title Installation - Directeur de memoire
 
 echo ==========================================================
 echo    Installation du Directeur de memoire
-echo    (a faire une seule fois, comptez 10 a 20 minutes)
+echo    (a faire une seule fois, comptez 10 a 30 minutes)
 echo ==========================================================
 echo.
 
 rem ---- 1. Outil "uv" (installe Python automatiquement) ----
 where uv >nul 2>nul
 if not errorlevel 1 goto uv_ok
-echo [1/4] Installation de l'outil uv...
+echo [1/5] Installation de l'outil uv...
 powershell -NoProfile -ExecutionPolicy Bypass -Command "irm https://astral.sh/uv/install.ps1 | iex"
 set "PATH=%USERPROFILE%\.local\bin;%PATH%"
 where uv >nul 2>nul
@@ -24,53 +24,51 @@ if errorlevel 1 (
     exit /b 1
 )
 :uv_ok
-echo [1/4] Outil uv : OK
+echo [1/5] Outil uv : OK
 
 rem ---- 2. Python 3.12 dans un dossier .venv ----
-echo [2/4] Preparation de Python...
+echo [2/5] Preparation de Python...
 if not exist ".venv\Scripts\python.exe" (
     uv venv .venv --python 3.12
     if errorlevel 1 goto erreur
 )
 
-rem ---- 3. Bibliotheques (avec carte graphique NVIDIA si presente) ----
-echo [3/4] Telechargement des bibliotheques (long la premiere fois)...
-where nvidia-smi >nul 2>nul
-if errorlevel 1 (
-    echo        Pas de carte graphique NVIDIA detectee : version processeur.
-    set "TORCH_INDEX=https://download.pytorch.org/whl/cpu"
-) else (
-    echo        Carte graphique NVIDIA detectee : version acceleree.
-    set "TORCH_INDEX=https://download.pytorch.org/whl/cu128"
-)
-uv pip install --python .venv\Scripts\python.exe "torch>=2.7,<2.10" --index-url %TORCH_INDEX%
-if errorlevel 1 goto erreur
+rem ---- 3. Bibliotheques (voix Phonon, detecteur de parole, page web) ----
+echo [3/5] Telechargement des bibliotheques...
 uv pip install --python .venv\Scripts\python.exe -r requirements.txt
 if errorlevel 1 goto erreur
 
-rem ---- 4. Ollama ----
-echo [4/4] Verification d'Ollama...
-where ollama >nul 2>nul
-if not errorlevel 1 goto ollama_ok
-if exist "%LOCALAPPDATA%\Programs\Ollama\ollama.exe" goto ollama_ok
-echo        Ollama n'est pas installe : tentative d'installation automatique...
-winget install -e --id Ollama.Ollama --accept-source-agreements --accept-package-agreements
+rem ---- 4. llama.cpp (le programme qui fait tourner Gemma 4) ----
+echo [4/5] Verification de llama.cpp...
+where llama-server >nul 2>nul
+if not errorlevel 1 goto llama_ok
+if exist "%LOCALAPPDATA%\Microsoft\WinGet\Links\llama-server.exe" goto llama_ok
+echo        llama.cpp n'est pas installe : installation automatique...
+winget install llama.cpp --accept-source-agreements --accept-package-agreements
 if errorlevel 1 (
     echo.
-    echo ATTENTION : installez Ollama vous-meme depuis https://ollama.com/download
-    echo puis relancez ce fichier.
+    echo ATTENTION : llama.cpp n'a pas pu etre installe automatiquement.
+    echo Voir le README, partie "Si llama.cpp ne s'installe pas".
     pause
     exit /b 1
 )
-:ollama_ok
-echo        Ollama : OK
+:llama_ok
+echo        llama.cpp : OK
+
+rem ---- 5. Le cerveau : Gemma 4 E2B (environ 3,8 Go, une seule fois) ----
+echo [5/5] Telechargement de Gemma 4 E2B (environ 3,8 Go, long la premiere fois)...
+set PYTHONUTF8=1
+set HF_HUB_DISABLE_SYMLINKS_WARNING=1
+".venv\Scripts\python.exe" -m agent.telecharger
+if errorlevel 1 goto erreur
 
 echo.
 echo ==========================================================
 echo    Installation terminee !
-echo    1. Ouvrez config.yaml avec le Bloc-notes et indiquez vos dossiers
-echo       et votre jeton Hugging Face (voir le README).
+echo    1. Verifiez config.yaml (vos dossiers et votre jeton Hugging Face).
 echo    2. Double-cliquez sur lancer.bat
+echo    Ollama n'est plus utilise : vous pouvez le quitter (icone pres de
+echo    l'horloge) pour liberer de la memoire.
 echo ==========================================================
 pause
 exit /b 0

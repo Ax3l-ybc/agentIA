@@ -79,6 +79,7 @@
         .note-systeme { align-self: center; font-size: .9rem; color: var(--encre-douce); font-style: italic; }
         footer { font-size: .85rem; color: var(--encre-douce); }
     </style>
+
 </head>
 <body>
 <main>
@@ -94,154 +95,230 @@
         </button>
         <div>
             <div class="etat" id="etat">Cliquez sur le micro pour commencer</div>
-            <label class="options"><input type="checkbox" id="anniEcho" checked> Anti-écho (gardez-le si vous n'avez pas de casque)</label>
+            <div class="options">Un casque évite l'écho ; sinon, le micro est coupé pendant que le directeur parle.</div>
         </div>
         <button class="bouton" id="boutonFiche" disabled>Rédiger la fiche de séance</button>
     </div>
 
     <section class="fil" id="fil">
         <p class="vide" id="vide">Votre directeur de mémoire va vous saluer puis vous poser une première question.<br>
+        Parlez normalement, puis marquez une courte pause : il vous répond.<br>
         Pour obtenir la fiche, dites par exemple « fais-moi la fiche de la séance » ou cliquez sur le bouton.</p>
     </section>
 
     <footer id="pied">Tout fonctionne sur cet ordinateur. Vos notes sont lues, jamais modifiées.</footer>
 </main>
 
-<script src="static/js/opus-encoder.js"></script>
-<script src="static/js/audio-processor.js"></script>
-<script src="static/js/synced-audio-player.js"></script>
 <script>
-    let pcmSortie = false;
-    fetch("api/audio-config").then(r => r.json()).then(c => { pcmSortie = c.pcm; });
-    fetch("api/infos").then(r => r.json()).then(i => {
-        document.getElementById("infos").textContent =
-            `${i.notes} note(s) disponibles · modèle ${i.modele}`;
-        document.getElementById("pied").textContent =
-            `Tout fonctionne sur cet ordinateur. Vos notes sont lues, jamais modifiées. Fiches : ${i.dossier_recaps}`;
-    });
-
-    const micro = document.getElementById("micro");
-    const iconeMicro = document.getElementById("iconeMicro");
-    const iconeStop = document.getElementById("iconeStop");
-    const etat = document.getElementById("etat");
-    const fil = document.getElementById("fil");
-    const boutonFiche = document.getElementById("boutonFiche");
-    const antiEcho = document.getElementById("anniEcho");
-
-    let ws = null, lecteur = null, enCours = false;
-    let bulleEtudiant = null, bullesDirecteur = {}, directeurAParle = false;
-
-    function afficherEtat(texte, classe = "") { etat.textContent = texte; etat.className = "etat " + classe; }
-
-    function defiler() { fil.scrollTop = fil.scrollHeight; }
-
-    function nouvelleBulle(classe, qui) {
-        document.getElementById("vide")?.remove();
-        const b = document.createElement("div");
-        b.className = "bulle " + classe;
-        b.innerHTML = `<div class="qui">${qui}</div><div class="texte"></div>`;
-        b._texte = b.querySelector(".texte");
-        fil.appendChild(b);
-        return b;
+// ---------------------------------------------------------------------------
+// Capture du micro : son ramené à 16 kHz, envoyé au serveur par paquets de 100 ms.
+// ---------------------------------------------------------------------------
+const CODE_CAPTEUR = `
+class Capteur extends AudioWorkletProcessor {
+    constructor() {
+        super();
+        this.pas = sampleRate / 16000;   // rapport entre le taux du navigateur et 16 kHz
+        this.position = 0;
+        this.precedent = 0;
+        this.paquet = new Int16Array(1600);
+        this.n = 0;
     }
-
-    function noteSysteme(texte) {
-        document.getElementById("vide")?.remove();
-        const p = document.createElement("p");
-        p.className = "note-systeme";
-        p.textContent = texte;
-        fil.appendChild(p);
-        defiler();
-    }
-
-    function surTexte({ text, turnIdx, isUser }) {
-        let bulle;
-        if (isUser) {
-            if (!bulleEtudiant || directeurAParle) {
-                bulleEtudiant = nouvelleBulle("etudiant", "Vous");
-                directeurAParle = false;
+    process(entrees) {
+        const canal = entrees[0] && entrees[0][0];
+        if (!canal) return true;
+        // Rééchantillonnage linéaire continu vers 16 kHz.
+        let pos = this.position;
+        while (pos < canal.length) {
+            const i = Math.floor(pos), f = pos - i;
+            const a = i === 0 ? this.precedent : canal[i - 1];
+            const b = canal[i];
+            const v = Math.max(-1, Math.min(1, a + (b - a) * f));
+            this.paquet[this.n++] = v * 32767;
+            if (this.n === this.paquet.length) {
+                this.port.postMessage(this.paquet.buffer, [this.paquet.buffer]);
+                this.paquet = new Int16Array(1600);
+                this.n = 0;
             }
-            bulle = bulleEtudiant;
-        } else {
-            bulle = bullesDirecteur[turnIdx];
-            if (!bulle) {
-                bulle = bullesDirecteur[turnIdx] = nouvelleBulle("directeur", "Directeur");
-            }
-            directeurAParle = true;
+            pos += this.pas;
         }
-        bulle._texte.textContent += text + " ";
+        this.position = pos - canal.length;
+        this.precedent = canal[canal.length - 1];
+        return true;
+    }
+}
+registerProcessor("capteur", Capteur);
+`;
+
+const micro = document.getElementById("micro");
+const iconeMicro = document.getElementById("iconeMicro");
+const iconeStop = document.getElementById("iconeStop");
+const etat = document.getElementById("etat");
+const fil = document.getElementById("fil");
+const boutonFiche = document.getElementById("boutonFiche");
+
+let ws = null, contexte = null, flux = null, capteur = null, enCours = false;
+let tauxVoix = 24000, prochaineLecture = 0, lecturesEnCours = 0;
+let bulleDirecteur = null, nouvelleReponse = true;
+const bullesEtudiant = {};
+
+fetch("api/infos").then(r => r.json()).then(i => {
+    document.getElementById("infos").textContent = `${i.notes} note(s) disponibles · ${i.modele}`;
+    document.getElementById("pied").textContent =
+        `Tout fonctionne sur cet ordinateur. Vos notes sont lues, jamais modifiées. Fiches : ${i.dossier_recaps}`;
+});
+
+const ETATS = {
+    preparation: ["Le directeur prépare la séance…", ""],
+    ecoute: ["Je vous écoute", "actif"],
+    reflexion: ["Le directeur réfléchit…", ""],
+    parle: ["Le directeur parle", ""],
+};
+
+function afficherEtat(texte, classe = "") { etat.textContent = texte; etat.className = "etat " + classe; }
+function defiler() { fil.scrollTop = fil.scrollHeight; }
+
+function nouvelleBulle(classe, qui) {
+    document.getElementById("vide")?.remove();
+    const b = document.createElement("div");
+    b.className = "bulle " + classe;
+    b.innerHTML = `<div class="qui">${qui}</div><div class="texte"></div>`;
+    b._texte = b.querySelector(".texte");
+    fil.appendChild(b);
+    defiler();
+    return b;
+}
+
+function noteSysteme(texte) {
+    document.getElementById("vide")?.remove();
+    const p = document.createElement("p");
+    p.className = "note-systeme";
+    p.textContent = texte;
+    fil.appendChild(p);
+    defiler();
+}
+
+// ---------------------------------------------------------------------------
+// Lecture de la voix du directeur : les morceaux sont joués à la suite.
+// ---------------------------------------------------------------------------
+function jouer(donnees) {
+    const pcm = new Int16Array(donnees);
+    if (!pcm.length || !contexte) return;
+    const tampon = contexte.createBuffer(1, pcm.length, tauxVoix);
+    const canal = tampon.getChannelData(0);
+    for (let i = 0; i < pcm.length; i++) canal[i] = pcm[i] / 32768;
+    const source = contexte.createBufferSource();
+    source.buffer = tampon;
+    source.connect(contexte.destination);
+    const debut = Math.max(contexte.currentTime + 0.05, prochaineLecture);
+    source.start(debut);
+    prochaineLecture = debut + tampon.duration;
+    lecturesEnCours++;
+    source.onended = () => {
+        lecturesEnCours--;
+        if (lecturesEnCours === 0 && ws && ws.readyState === WebSocket.OPEN) {
+            ws.send(JSON.stringify({ type: "lecture_finie" }));
+        }
+    };
+}
+
+function surMessage(evenement) {
+    if (evenement.data instanceof ArrayBuffer) { jouer(evenement.data); return; }
+    const m = JSON.parse(evenement.data);
+    if (m.type === "config") { tauxVoix = m.taux; }
+    else if (m.type === "etat") {
+        const [texte, classe] = ETATS[m.etat] || [m.etat, ""];
+        afficherEtat(texte, classe);
+        if (m.etat === "reflexion") nouvelleReponse = true;
+    }
+    else if (m.type === "directeur") {
+        if (nouvelleReponse || !bulleDirecteur) {
+            bulleDirecteur = nouvelleBulle("directeur", "Directeur");
+            nouvelleReponse = false;
+        }
+        bulleDirecteur._texte.textContent += m.texte + " ";
         defiler();
     }
-
-    function surEvenement(type, msg) {
-        if (type !== "fiche") return;
-        if (msg.etat === "en_cours") noteSysteme("Rédaction de la fiche de séance en cours…");
-        else if (msg.etat === "ok") noteSysteme(`Fiche enregistrée : ${msg.fichier}`);
-        else if (msg.etat === "erreur") noteSysteme(`Fiche non rédigée : ${msg.message}`);
+    else if (m.type === "etudiant") {
+        let b = bullesEtudiant[m.id];
+        if (!m.texte) { b?.remove(); return; }
+        if (!b) { b = bullesEtudiant[m.id] = nouvelleBulle("etudiant", "Vous"); }
+        b._texte.textContent = m.texte;
+        nouvelleReponse = true;
+        defiler();
     }
+    else if (m.type === "fiche") {
+        if (m.etat === "en_cours") noteSysteme("Rédaction de la fiche de séance en cours…");
+        else if (m.etat === "ok") noteSysteme(`Fiche enregistrée : ${m.fichier}`);
+        else noteSysteme(`Fiche non rédigée : ${m.message}`);
+    }
+    else if (m.type === "erreur") { afficherEtat(m.message, "erreur"); }
+}
 
-    async function demarrer() {
-        fil.innerHTML = "";
-        bulleEtudiant = null; bullesDirecteur = {}; directeurAParle = false;
-        lecteur = new SyncedAudioPlayer({
-            basePath: "static/js",
-            sampleRate: 24000,
-            pcmOutput: pcmSortie,
-            echoCancellation: antiEcho.checked,
-            onEncodedAudio: (donnees) => {
-                if (enCours && ws && ws.readyState === WebSocket.OPEN) ws.send(donnees);
-            },
-            onText: surTexte,
-            onEvent: surEvenement,
-            onError: (e) => { console.error(e); afficherEtat(e.message, "erreur"); },
+// ---------------------------------------------------------------------------
+// Début et fin de séance
+// ---------------------------------------------------------------------------
+async function demarrer() {
+    fil.innerHTML = "";
+    bulleDirecteur = null; nouvelleReponse = true;
+    try {
+        flux = await navigator.mediaDevices.getUserMedia({
+            audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true, channelCount: 1 }
         });
-        try {
-            await lecteur.start();
-        } catch (e) {
-            afficherEtat("Accès au micro refusé : autorisez-le dans le navigateur.", "erreur");
-            return;
-        }
-        const proto = location.protocol === "https:" ? "wss:" : "ws:";
-        ws = new WebSocket(`${proto}//${location.host}/ws/chat`);
-        ws.onopen = () => {
-            ws.send(JSON.stringify({ type: "start" }));
-            enCours = true;
-            micro.classList.add("actif");
-            iconeMicro.style.display = "none";
-            iconeStop.style.display = "block";
-            boutonFiche.disabled = false;
-            antiEcho.disabled = true;
-            afficherEtat("Séance en cours, je vous écoute", "actif");
-        };
-        ws.onmessage = (ev) => lecteur.handleMessage(ev.data);
-        ws.onerror = () => afficherEtat("Erreur de connexion", "erreur");
-        ws.onclose = () => { remettreAZero(); if (etat.classList.contains("actif")) afficherEtat("Séance terminée"); };
+    } catch (e) {
+        afficherEtat("Accès au micro refusé : autorisez-le dans le navigateur.", "erreur");
+        return;
     }
+    contexte = new AudioContext();
+    const url = URL.createObjectURL(new Blob([CODE_CAPTEUR], { type: "application/javascript" }));
+    await contexte.audioWorklet.addModule(url);
+    capteur = new AudioWorkletNode(contexte, "capteur");
+    contexte.createMediaStreamSource(flux).connect(capteur);
+    capteur.port.onmessage = (e) => {
+        if (enCours && ws && ws.readyState === WebSocket.OPEN) ws.send(e.data);
+    };
+    prochaineLecture = 0; lecturesEnCours = 0;
 
-    function arreter() {
-        if (ws && ws.readyState === WebSocket.OPEN) {
-            ws.send(JSON.stringify({ type: "stop" }));
-            ws.close();
-        }
-        ws = null;
-        remettreAZero();
-        afficherEtat("Séance terminée. Cliquez sur le micro pour en commencer une autre.");
+    const proto = location.protocol === "https:" ? "wss:" : "ws:";
+    ws = new WebSocket(`${proto}//${location.host}/ws/seance`);
+    ws.binaryType = "arraybuffer";
+    ws.onopen = () => {
+        enCours = true;
+        micro.classList.add("actif");
+        iconeMicro.style.display = "none";
+        iconeStop.style.display = "block";
+        boutonFiche.disabled = false;
+        afficherEtat(...ETATS.preparation);
+        ws.send(JSON.stringify({ type: "debut" }));
+    };
+    ws.onmessage = surMessage;
+    ws.onerror = () => afficherEtat("Erreur de connexion", "erreur");
+    ws.onclose = () => { remettreAZero(); if (!etat.classList.contains("erreur")) afficherEtat("Séance terminée. Cliquez sur le micro pour en commencer une autre."); };
+}
+
+function arreter() {
+    if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ type: "stop" }));
+        ws.close();
     }
+    ws = null;
+    remettreAZero();
+    afficherEtat("Séance terminée. Cliquez sur le micro pour en commencer une autre.");
+}
 
-    function remettreAZero() {
-        enCours = false;
-        if (lecteur) { lecteur.stop(); lecteur = null; }
-        micro.classList.remove("actif");
-        iconeMicro.style.display = "block";
-        iconeStop.style.display = "none";
-        boutonFiche.disabled = true;
-        antiEcho.disabled = false;
-    }
+function remettreAZero() {
+    enCours = false;
+    if (flux) { flux.getTracks().forEach(t => t.stop()); flux = null; }
+    if (contexte) { contexte.close(); contexte = null; }
+    micro.classList.remove("actif");
+    iconeMicro.style.display = "block";
+    iconeStop.style.display = "none";
+    boutonFiche.disabled = true;
+}
 
-    micro.addEventListener("click", () => enCours ? arreter() : demarrer());
-    boutonFiche.addEventListener("click", () => {
-        if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: "fiche" }));
-    });
+micro.addEventListener("click", () => enCours ? arreter() : demarrer());
+boutonFiche.addEventListener("click", () => {
+    if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: "fiche" }));
+});
 </script>
 </body>
 </html>

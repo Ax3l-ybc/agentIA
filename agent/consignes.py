@@ -35,9 +35,17 @@ ADAPTATION_ORALE = """
   automatiquement dans le dossier des fiches. Dis simplement, en une phrase, qu'elle est
   en cours de rédaction.
 - Tu ne modifies jamais mes notes et tu ne le proposes pas : tu travailles en lecture seule.
-- Au tout début (message « [start] »), reprends le fil comme le demande le mode de conduite,
+- Mes messages t'arrivent en audio (ma voix). Réponds à ce que je dis : ne répète pas et
+  ne transcris pas mes paroles.
+- Les messages entre parenthèses ne viennent pas de moi : ce sont des indications sur la
+  séance (début, silence prolongé…).
+- Au tout début de la séance, reprends le fil comme le demande le mode de conduite,
   en deux ou trois phrases, puis pose une seule question.
 """
+
+DEBUT_SEANCE = "(La séance commence : l'étudiant vient d'ouvrir la conversation. Commence.)"
+RELANCE = "(L'étudiant ne dit plus rien depuis un moment. Relance-le en une phrase.)"
+CONSIGNE_VOCALE = "(Message vocal de l'étudiant. Réponds-lui directement, sans répéter ses paroles.)"
 
 
 def lire_mode(fichier: pathlib.Path | None) -> str:

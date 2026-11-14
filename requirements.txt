@@ -1,8 +1,9 @@
-# PyTorch est installé à part par installer.bat (version carte graphique ou processeur).
-gradbot>=0.2.0
+# Le cerveau (Gemma 4 E2B) tourne dans llama.cpp, installé par installer.bat (winget).
+# faster-whisper n'est plus utilisé pour écouter : il fournit le détecteur de parole Silero.
 faster-whisper>=1.1
+onnxruntime
+huggingface_hub
 ptts>=0.6.0
-moshi>=0.2.11
 fastapi
 uvicorn[standard]
 pyyaml

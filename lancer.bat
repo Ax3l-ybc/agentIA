@@ -10,8 +10,8 @@ if not exist ".venv\Scripts\python.exe" (
     exit /b 1
 )
 
-rem Ollama installe pour l'utilisateur courant mais absent du PATH
-if exist "%LOCALAPPDATA%\Programs\Ollama\ollama.exe" set "PATH=%LOCALAPPDATA%\Programs\Ollama;%PATH%"
+rem llama.cpp installe par winget : ses liens ne sont pas toujours dans le PATH
+if exist "%LOCALAPPDATA%\Microsoft\WinGet\Links" set "PATH=%LOCALAPPDATA%\Microsoft\WinGet\Links;%PATH%"
 
 set PYTHONUTF8=1
 set PYTHONIOENCODING=utf-8

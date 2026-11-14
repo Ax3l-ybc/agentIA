@@ -1,4 +1,9 @@
-"""Application web : l'agent vocal « directeur de mémoire » construit sur Gradbot."""
+"""Application web du directeur de mémoire (Gemma 4 dans llama.cpp + voix Phonon).
+
+Ce module garde tout ce qui est propre au directeur de mémoire : les notes (lecture seule),
+les consignes construites à partir du mode de conduite, les outils et la fiche de séance.
+Le déroulement de la conversation à la voix est dans seance.py.
+"""
 
 from __future__ import annotations
 
@@ -11,83 +16,44 @@ import pathlib
 import re
 
 import fastapi
-import gradbot
+import fastapi.responses
+import fastapi.staticfiles
 
 from . import coffre as coffre_mod
-from . import consignes, moteurs, ollama, serveur_voix
+from . import consignes
+from .cerveau import CerveauLlamaCpp
 from .reglages import Reglages
 
 log = logging.getLogger("agent")
 
 DOSSIER_STATIC = pathlib.Path(__file__).parent / "static"
 
-MOIS = [
-    "janvier", "février", "mars", "avril", "mai", "juin",
-    "juillet", "août", "septembre", "octobre", "novembre", "décembre",
-]
+
+def outil(nom: str, description: str, proprietes: dict | None = None, requis: list | None = None) -> dict:
+    return {
+        "type": "function",
+        "function": {
+            "name": nom,
+            "description": description,
+            "parameters": {"type": "object", "properties": proprietes or {}, "required": requis or []},
+        },
+    }
+
 
 OUTILS = [
-    gradbot.ToolDef(
-        "lister_notes",
-        "Donne la liste à jour des notes du mémoire de l'étudiant.",
-        json.dumps({"type": "object", "properties": {}, "required": []}),
-    ),
-    gradbot.ToolDef(
-        "lire_note",
-        "Lit le contenu d'une note du mémoire (lecture seule). Le nom peut être approximatif.",
-        json.dumps(
-            {
-                "type": "object",
-                "properties": {"nom": {"type": "string", "description": "Nom de la note"}},
-                "required": ["nom"],
-            }
-        ),
-    ),
-    gradbot.ToolDef(
-        "chercher_dans_notes",
-        "Cherche des mots-clés dans toutes les notes et renvoie les passages trouvés.",
-        json.dumps(
-            {
-                "type": "object",
-                "properties": {"requete": {"type": "string", "description": "Mots-clés"}},
-                "required": ["requete"],
-            }
-        ),
-    ),
-    gradbot.ToolDef(
-        "lire_fiche",
-        "Lit une fiche de séance précédente (par sa date ou son sujet).",
-        json.dumps(
-            {
-                "type": "object",
-                "properties": {"nom": {"type": "string", "description": "Date ou sujet de la fiche"}},
-                "required": ["nom"],
-            }
-        ),
-    ),
-    gradbot.ToolDef(
-        "rediger_fiche_recap",
-        "Rédige et enregistre la fiche de clôture de la séance (selon le modèle du mode de "
-        "conduite) dans le dossier des fiches. À utiliser quand l'étudiant demande la fiche "
-        "ou dit qu'on termine.",
-        json.dumps(
-            {
-                "type": "object",
-                "properties": {
-                    "consignes": {
-                        "type": "string",
-                        "description": "Précisions éventuelles de l'étudiant pour la fiche",
-                    }
-                },
-                "required": [],
-            }
-        ),
-    ),
+    outil("lister_notes", "Donne la liste à jour des notes du mémoire de l'étudiant."),
+    outil("lire_note", "Lit le contenu d'une note du mémoire (lecture seule). Le nom peut être approximatif.",
+          {"nom": {"type": "string", "description": "Nom de la note"}}, ["nom"]),
+    outil("chercher_dans_notes", "Cherche des mots-clés dans toutes les notes et renvoie les passages trouvés.",
+          {"requete": {"type": "string", "description": "Mots-clés"}}, ["requete"]),
+    outil("lire_fiche", "Lit une fiche de séance précédente (par sa date ou son sujet).",
+          {"nom": {"type": "string", "description": "Date ou sujet de la fiche"}}, ["nom"]),
+    outil("rediger_fiche_recap",
+          "Rédige et enregistre la fiche de clôture de la séance (selon le modèle du mode de "
+          "conduite) dans le dossier des fiches. À utiliser quand l'étudiant demande la fiche "
+          "ou dit qu'on termine.",
+          {"consignes": {"type": "string", "description": "Précisions éventuelles de l'étudiant pour la fiche"}}),
 ]
-
-
-def date_en_francais(d: datetime.datetime) -> str:
-    return f"{d.day} {MOIS[d.month - 1]} {d.year} à {d:%Hh%M}"
 
 
 class Seance:
@@ -99,73 +65,91 @@ class Seance:
         self.notes_lues: set[str] = set()
         self.fiche_en_cours: asyncio.Task | None = None
 
-    def ajouter(self, role: str, texte: str) -> None:
-        texte = texte.strip()
-        if not texte:
-            return
-        if self.echanges and self.echanges[-1][0] == role:
-            texte = self.echanges[-1][1] + " " + texte
-            self.echanges[-1][1] = re.sub(r"\s+([,.…])", r"\1", texte)
-        else:
-            self.echanges.append([role, texte])
+    def ajouter(self, role: str, texte: str) -> list[str]:
+        """Ajoute une réplique ; renvoie l'échange (modifiable plus tard)."""
+        echange = [role, texte.strip()]
+        self.echanges.append(echange)
+        return echange
 
     def transcription(self) -> str:
         noms = {"etudiant": "Étudiant", "directeur": "Directeur"}
-        return "\n".join(f"{noms[r]} : {t}" for r, t in self.echanges)
+        lignes = []
+        for r, t in self.echanges:
+            if t:
+                propre = re.sub(r"\s+([,.…])", r"\1", t)
+                lignes.append(f"{noms[r]} : {propre}")
+        return "\n".join(lignes)
 
     def etudiant_a_parle(self) -> bool:
-        return any(r == "etudiant" for r, _ in self.echanges)
+        return any(r == "etudiant" and t for r, t in self.echanges)
 
 
 class Agent:
-    def __init__(self, reglages: Reglages):
+    def __init__(self, reglages: Reglages, cerveau: CerveauLlamaCpp, voix, detecteur_factory):
         self.r = reglages
         self.coffre = coffre_mod.Coffre(reglages.dossier_notes, reglages.dossier_recaps)
-        self.modele_llm = reglages.ollama_modele
-        self.config_gradbot = gradbot.config.Config(
-            llm={
-                "model": self.modele_llm,
-                "base_url": f"{reglages.ollama_adresse}/v1",
-                "api_key": "ollama",
-            },
-            gradium={"api_key": "local", "base_url": f"http://127.0.0.1:{reglages.port}/api"},
-        )
+        self.cerveau = cerveau
+        self.voix = voix
+        self.nouveau_detecteur = detecteur_factory  # un détecteur de parole par séance
+        self.reparer = None  # redémarre llama.cpp s'il s'arrête (fourni par __main__)
 
-    def utiliser_modele(self, nom: str) -> None:
-        self.modele_llm = nom
-        self.config_gradbot.llm.model = nom
-
-    # ----------------------------------------------------------- configuration
+    # ----------------------------------------------------------- consignes
 
     def mode_de_conduite(self) -> str:
         from .reglages import RACINE
 
         return consignes.lire_mode(self.r.mode_de_conduite or RACINE / "mode_de_conduite.md")
 
-    def config_seance(self) -> gradbot.SessionConfig:
-        index = self.coffre.index()
+    def consignes_seance(self) -> str:
         texte = None
         if self.coffre.taille_totale() <= self.r.seuil_notes_entieres:
             texte = self.coffre.tout_le_texte()
-        return gradbot.SessionConfig(
-            instructions=consignes.construire(
-                self.mode_de_conduite(),
-                self.r.sujet_memoire,
-                index,
-                texte,
-                self.coffre.fiches_recentes(2, 4000),
-                [p.stem for p in self.coffre.lister_fiches()],
-            ),
-            language=gradbot.Lang.Fr,
-            tools=OUTILS,
-            assistant_speaks_first=True,
-            silence_timeout_s=self.r.silence_relance_s,
-            flush_duration_s=0.6,
+        return consignes.construire(
+            self.mode_de_conduite(),
+            self.r.sujet_memoire,
+            self.coffre.index(),
+            texte,
+            self.coffre.fiches_recentes(2, 4000),
+            [p.stem for p in self.coffre.lister_fiches()],
         )
 
-    # ------------------------------------------------------------------ fiches
+    def prechauffer(self) -> None:
+        """Fait lire les consignes au cerveau à l'avance : le début de séance sera rapide."""
+        import time
 
-    async def rediger_fiche(self, seance: Seance, precisions: str = "") -> pathlib.Path:
+        debut = time.monotonic()
+        messages = [{"role": "system", "content": self.consignes_seance()},
+                    {"role": "user", "content": consignes.DEBUT_SEANCE}]
+        for _ in self.cerveau.discuter_en_flux(messages, OUTILS, espace=0, max_mots=1):
+            pass
+        log.info("Consignes, notes et fiches lues par le cerveau en %.0f s.", time.monotonic() - debut)
+
+    # ------------------------------------------------------------- outils
+
+    def executer_outil(self, nom: str, args: dict, seance: Seance, lancer_fiche) -> dict:
+        log.info("Outil %s %s", nom, args)
+        if nom == "lister_notes":
+            return {"notes": [n.relatif for n in self.coffre.lister()]}
+        if nom == "lire_note":
+            resultat = self.coffre.lire(str(args.get("nom", "")))
+            if "note" in resultat:
+                seance.notes_lues.add(resultat["note"])
+            return resultat
+        if nom == "chercher_dans_notes":
+            return self.coffre.chercher(str(args.get("requete", "")))
+        if nom == "lire_fiche":
+            return self.coffre.lire_fiche(str(args.get("nom", "")))
+        if nom == "rediger_fiche_recap":
+            if not seance.etudiant_a_parle():
+                return {"erreur": "La séance vient de commencer, rien à résumer."}
+            if lancer_fiche(str(args.get("consignes", ""))):
+                return {"statut": "Rédaction lancée. La fiche sera enregistrée dans le dossier des fiches."}
+            return {"statut": "Une fiche est déjà en cours de rédaction."}
+        return {"erreur": f"Outil inconnu : {nom}"}
+
+    # -------------------------------------------------------------- fiche
+
+    def rediger_fiche(self, seance: Seance, precisions: str = "") -> pathlib.Path:
         if not seance.etudiant_a_parle():
             raise ValueError("La séance n'a pas encore commencé : rien à résumer.")
         if self.coffre.taille_totale() <= self.r.seuil_notes_entieres:
@@ -187,234 +171,45 @@ class Agent:
         if precisions:
             demande += f"\nPRÉCISIONS POUR LA FICHE : {precisions}\n"
         systeme = (
-            "# MODE DE CONDUITE\n"
-            + self.mode_de_conduite()
-            + "\n\n"
+            "# MODE DE CONDUITE\n" + self.mode_de_conduite() + "\n\n"
             + consignes.CONSIGNE_FICHE.format(date=f"{aujourd_hui:%Y-%m-%d}")
         )
-        reponse = await asyncio.to_thread(
-            ollama.discuter,
-            self.r.ollama_adresse,
-            self.modele_llm,
-            [{"role": "system", "content": systeme}, {"role": "user", "content": demande}],
-            self.r.ollama_contexte,
+        reponse = self.cerveau.rediger(
+            [{"role": "system", "content": systeme}, {"role": "user", "content": demande}]
         )
         nom, contenu = consignes.extraire_fiche(reponse, aujourd_hui)
-        chemin = await asyncio.to_thread(
-            self.coffre.ecrire_recap, contenu, datetime.datetime.now(), nom
-        )
+        chemin = self.coffre.ecrire_recap(contenu, datetime.datetime.now(), nom)
         log.info("Fiche enregistrée : %s", chemin)
         return chemin
 
-    def lancer_fiche(self, seance: Seance, ws: fastapi.WebSocket, precisions: str = "") -> bool:
-        """Lance la rédaction en arrière-plan. Faux si une rédaction est déjà en cours."""
-        if seance.fiche_en_cours and not seance.fiche_en_cours.done():
-            return False
 
-        async def tache():
-            await _envoyer(ws, {"type": "fiche", "etat": "en_cours"})
-            try:
-                chemin = await self.rediger_fiche(seance, precisions)
-                await _envoyer(ws, {"type": "fiche", "etat": "ok", "fichier": chemin.name})
-            except Exception as exc:  # noqa: BLE001
-                log.exception("Échec de la fiche")
-                await _envoyer(ws, {"type": "fiche", "etat": "erreur", "message": str(exc)})
+def creer_app(agent: Agent) -> fastapi.FastAPI:
+    from .seance import deroule_seance
 
-        seance.fiche_en_cours = asyncio.create_task(tache())
-        return True
-
-    # ------------------------------------------------------------------ outils
-
-    async def sur_outil(self, outil: gradbot.ToolHandle, seance: Seance, ws) -> None:
-        nom, args = outil.name, outil.args
-        log.info("Outil %s %s", nom, args)
-        if nom == "lister_notes":
-            await outil.send_json({"notes": [n.relatif for n in self.coffre.lister()]})
-        elif nom == "lire_note":
-            resultat = await asyncio.to_thread(self.coffre.lire, str(args.get("nom", "")))
-            if "note" in resultat:
-                seance.notes_lues.add(resultat["note"])
-            await outil.send_json(resultat)
-        elif nom == "chercher_dans_notes":
-            resultat = await asyncio.to_thread(self.coffre.chercher, str(args.get("requete", "")))
-            await outil.send_json(resultat)
-        elif nom == "lire_fiche":
-            resultat = await asyncio.to_thread(self.coffre.lire_fiche, str(args.get("nom", "")))
-            await outil.send_json(resultat)
-        elif nom == "rediger_fiche_recap":
-            if not seance.etudiant_a_parle():
-                await outil.send_json({"erreur": "La séance vient de commencer, rien à résumer."})
-            elif self.lancer_fiche(seance, ws, str(args.get("consignes", ""))):
-                await outil.send_json(
-                    {"statut": "Rédaction lancée. La fiche sera enregistrée dans le dossier recaps."}
-                )
-            else:
-                await outil.send_json({"statut": "Une fiche est déjà en cours de rédaction."})
-        else:
-            await outil.send_error(f"Outil inconnu : {nom}")
-
-
-async def _envoyer(ws: fastapi.WebSocket, donnees: dict) -> None:
-    with contextlib.suppress(Exception):
-        await ws.send_json(donnees)
-
-
-async def boucle_seance(agent: Agent, ws: fastapi.WebSocket) -> None:
-    """Session vocale (adaptée de gradbot.websocket.handle_session).
-
-    En plus de relayer l'audio, elle garde la transcription de la séance et
-    accepte le message {"type": "fiche"} envoyé par le bouton de la page.
-    """
-    await ws.accept()
-    seance = Seance()
-    cfg = agent.config_gradbot
-    taches_outils: set[asyncio.Task] = set()
-    try:
-        debut = await ws.receive_json()
-        if debut.get("type") != "start":
-            await ws.close(code=4000)
-            return
-        entree, sortie = await gradbot.run(
-            **cfg.client_kwargs,
-            session_config=agent.config_seance(),
-            input_format=gradbot.AudioFormat.OggOpus,
-            output_format=cfg.audio_format,
-        )
-    except Exception as exc:  # noqa: BLE001
-        log.exception("Impossible de démarrer la séance")
-        await _envoyer(ws, {"type": "error", "message": f"Démarrage impossible : {exc}"})
-        with contextlib.suppress(Exception):
-            await ws.close()
-        return
-
-    arret = asyncio.Event()
-
-    async def boucle_entree():
-        while not arret.is_set():
-            try:
-                brut = await ws.receive()
-            except (fastapi.WebSocketDisconnect, RuntimeError):
-                break
-            if brut.get("type") == "websocket.disconnect":
-                break
-            if brut.get("bytes") is not None:
-                await entree.send_audio(brut["bytes"])
-                continue
-            if brut.get("text") is None:
-                continue
-            donnees = json.loads(brut["text"])
-            if donnees.get("type") == "stop":
-                break
-            if donnees.get("type") == "fiche":
-                if not seance.etudiant_a_parle():
-                    await _envoyer(
-                        ws,
-                        {"type": "fiche", "etat": "erreur", "message": "Rien à résumer pour l'instant."},
-                    )
-                elif not agent.lancer_fiche(seance, ws):
-                    await _envoyer(ws, {"type": "fiche", "etat": "en_cours"})
-        arret.set()
-        with contextlib.suppress(Exception):
-            await entree.close()
-
-    async def boucle_sortie():
-        while not arret.is_set():
-            try:
-                msg = await sortie.receive()
-            except Exception as exc:  # noqa: BLE001
-                log.exception("Erreur de session")
-                await _envoyer(ws, {"type": "error", "message": str(exc)})
-                break
-            if msg is None:
-                break
-            if msg.msg_type == "tool_call":
-                outil = gradbot.ToolHandle(msg.tool_call_handle, msg.tool_call)
-
-                async def executer(o=outil):
-                    try:
-                        await agent.sur_outil(o, seance, ws)
-                    except Exception as exc:  # noqa: BLE001
-                        log.exception("Outil %s en échec", o.name)
-                        with contextlib.suppress(Exception):
-                            await o.send_error(str(exc))
-
-                t = asyncio.create_task(executer())
-                taches_outils.add(t)
-                t.add_done_callback(taches_outils.discard)
-                continue
-            if msg.msg_type == "stt_text" and msg.text:
-                seance.ajouter("etudiant", msg.text)
-            elif msg.msg_type == "tts_text" and msg.text:
-                seance.ajouter("directeur", gradbot.schemas.sanitize(msg.text))
-            schema = gradbot.schemas.from_msg(msg)
-            if schema is None:
-                continue
-            try:
-                await ws.send_json(schema.model_dump())
-                if msg.msg_type == "audio":
-                    await ws.send_bytes(msg.data)
-            except Exception:  # noqa: BLE001
-                break
-        arret.set()
-
-    try:
-        await asyncio.gather(boucle_sortie(), boucle_entree())
-    finally:
-        for t in taches_outils:
-            t.cancel()
-        # Une fiche en cours de rédaction est menée à son terme.
-        if seance.fiche_en_cours and not seance.fiche_en_cours.done():
-            with contextlib.suppress(Exception):
-                await seance.fiche_en_cours
-        with contextlib.suppress(Exception):
-            await ws.close()
-
-
-def creer_app(reglages: Reglages, moteur_ecoute=None, moteur_voix=None, modele_llm=None):
-    """Construit l'application. Les moteurs peuvent être fournis (tests)."""
-    agent = Agent(reglages)
-
-    @contextlib.asynccontextmanager
-    async def cycle_de_vie(app):
-        if modele_llm:
-            agent.utiliser_modele(modele_llm)
-        else:
-            nom = await asyncio.to_thread(
-                ollama.preparer, reglages.ollama_adresse, reglages.ollama_modele, reglages.ollama_contexte
-            )
-            agent.utiliser_modele(nom)
-        serveur_voix.MOTEURS["ecoute"] = moteur_ecoute or await asyncio.to_thread(
-            moteurs.MoteurEcoute, reglages.stt_modele, reglages.materiel
-        )
-        serveur_voix.MOTEURS["voix"] = moteur_voix or await asyncio.to_thread(
-            moteurs.MoteurVoix,
-            reglages.voix_modele,
-            reglages.voix_nom,
-            reglages.voix_vitesse,
-            reglages.materiel,
-        )
-        n = len(agent.coffre.lister())
-        log.info("%s note(s) trouvée(s) dans %s (lecture seule).", n, reglages.dossier_notes)
-        log.info("Les fiches iront dans %s.", reglages.dossier_recaps)
-        app.state.pret = True
-        yield
-
-    app = fastapi.FastAPI(title="Directeur de mémoire", lifespan=cycle_de_vie)
-    app.state.pret = False
+    app = fastapi.FastAPI(title="Directeur de mémoire")
     app.state.agent = agent
-    app.include_router(serveur_voix.routeur)
 
-    @app.websocket("/ws/chat")
-    async def ws_chat(ws: fastapi.WebSocket):
-        await boucle_seance(agent, ws)
+    @app.websocket("/ws/seance")
+    async def ws_seance(ws: fastapi.WebSocket):
+        await deroule_seance(agent, ws)
 
     @app.get("/api/infos")
     async def infos():
         return {
             "notes": len(agent.coffre.lister()),
-            "dossier_recaps": str(reglages.dossier_recaps),
-            "modele": agent.modele_llm,
+            "dossier_recaps": str(agent.r.dossier_recaps),
+            "modele": agent.r.llamacpp_modele.name,
         }
 
-    gradbot.routes.setup(app, config=agent.config_gradbot, static_dir=DOSSIER_STATIC)
+    app.mount("/static", fastapi.staticfiles.StaticFiles(directory=DOSSIER_STATIC), name="static")
+
+    @app.get("/")
+    async def index():
+        return fastapi.responses.FileResponse(DOSSIER_STATIC / "index.html")
+
     return app
+
+
+async def envoyer(ws: fastapi.WebSocket, donnees: dict) -> None:
+    with contextlib.suppress(Exception):
+        await ws.send_text(json.dumps(donnees, ensure_ascii=False))

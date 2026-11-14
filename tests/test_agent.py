@@ -18,7 +18,7 @@ import numpy as np
 import pytest
 
 from agent import coffre as coffre_mod
-from agent import moteurs, reglages, serveur_voix
+from agent import moteurs, reglages
 
 # ---------------------------------------------------------------------------
 # Outils de test
@@ -96,11 +96,15 @@ def test_reglages(tmp_path, coffre_test):
     notes, recaps = coffre_test
     fichier = tmp_path / "config.yaml"
     fichier.write_text(
-        f"dossier_notes: '{notes}'\ndossier_recaps: '{recaps}'\nollama:\n  modele: 'x'\n",
+        f"dossier_notes: '{notes}'\ndossier_recaps: '{recaps}'\n"
+        "ollama:\n  modele: 'ancien réglage ignoré'\ncerveau:\n  taille_contexte: 8192\n"
+        "  modele: 'gemma-4-E2B-it-Q3_K_M.gguf'\n",
         encoding="utf-8",
     )
     r = reglages.charger(fichier)
-    assert r.ollama_modele == "x" and recaps.is_dir()
+    assert r.llamacpp_contexte == 8192 and recaps.is_dir()
+    assert r.llamacpp_modele == reglages.DOSSIER_DONNEES / "modeles" / "gemma-4-E2B-it-Q3_K_M.gguf"
+    assert r.llamacpp_mmproj.name == "mmproj-F16.gguf" and r.llamacpp_couches_gpu == 0
     fichier.write_text(
         f"dossier_notes: '{notes}'\ndossier_recaps: '{notes / 'sous'}'\n", encoding="utf-8"
     )
@@ -120,7 +124,7 @@ def test_reglages_apostrophe_dans_le_texte(tmp_path, coffre_test):
 
 
 # ---------------------------------------------------------------------------
-# Audio et découpage du texte
+# Audio, découpage du texte et des phrases
 # ---------------------------------------------------------------------------
 
 
@@ -133,236 +137,43 @@ def test_reechantillonneur_continu():
 
 
 def test_couper_phrases():
-    phrases, reste = serveur_voix.couper_phrases("Bonjour. Comment vas-tu ? Je", premiere=True)
+    from agent.texte_voix import couper_phrases, nettoyer_pour_voix
+
+    phrases, reste = couper_phrases("Bonjour. Comment vas-tu ? Je", premiere=True)
     assert phrases == ["Bonjour.", "Comment vas-tu ?"] and reste == "Je"
+    assert nettoyer_pour_voix("**Très** bien 🙂 [[Note]]") == "Très bien Note"
 
 
-def test_assembleur_mots():
-    a = serveur_voix._AssembleurMots(delai_s=0.5)
-    sortie = []
-    for jeton, morceau in [(0, None), (5, "▁Bon"), (5, "jour"), (0, None), (5, "▁à"), (3, None), (3, None)]:
-        sortie += a.pousser(jeton, morceau, 1.0)
-    assert [m["text"] for m in sortie] == ["Bonjour", "à"]
+def detecteur_energie():
+    return lambda bloc: 0.9 if float(np.abs(bloc).mean()) > 0.01 else 0.1
+
+
+def ton(secondes: float, taux: int = 16000) -> np.ndarray:
+    t = np.arange(int(secondes * taux)) / taux
+    return (0.3 * np.sin(2 * np.pi * 300 * t)).astype(np.float32)
+
+
+def test_decoupeur_phrases():
+    from agent.phrases import DecoupeurPhrases
+
+    d = DecoupeurPhrases(detecteur_energie(), pause_s=0.8)
+    signal = np.concatenate([np.zeros(16000, np.float32), ton(2.0), np.zeros(24000, np.float32)])
+    phrases = []
+    for i in range(0, len(signal), 1600):
+        phrases += d.ajouter(signal[i : i + 1600])
+    assert len(phrases) == 1 and 2.5 <= len(phrases[0]) / 16000 <= 3.4
+    d.reinitialiser()
+    bref = np.concatenate([ton(0.1), np.zeros(24000, np.float32)])
+    assert d.ajouter(bref) == []  # un bruit bref n'est pas une phrase
 
 
 def test_seance_ponctuation():
     from agent.application import Seance
 
     s = Seance()
-    for mot in ["Pour", "cela", ",", "il", "faut"]:
-        s.ajouter("etudiant", mot)
-    assert s.transcription() == "Étudiant : Pour cela, il faut"
-
-
-# ---------------------------------------------------------------------------
-# Bout en bout : Gradbot + serveur vocal local + faux LLM
-# ---------------------------------------------------------------------------
-
-
-def faux_ollama_app(journal: list):
-    """Imite l'API d'Ollama (OpenAI /v1 en streaming + /api/chat)."""
-    from fastapi.responses import StreamingResponse
-
-    app = fastapi.FastAPI()
-
-    def sse(morceaux):
-        for m in morceaux:
-            yield "data: " + json.dumps(m) + "\n\n"
-        yield "data: [DONE]\n\n"
-
-    def bloc(delta, fin=None):
-        return {
-            "id": "x", "object": "chat.completion.chunk", "created": 0, "model": "faux",
-            "choices": [{"index": 0, "delta": delta, "finish_reason": fin}],
-        }
-
-    @app.post("/v1/chat/completions")
-    async def completions(req: fastapi.Request):
-        corps = await req.json()
-        journal.append(corps)
-        messages = corps["messages"]
-        dernier = messages[-1]
-        if dernier["role"] == "tool":
-            texte = "Très bien, la fiche est en cours de rédaction."
-            m = [bloc({"role": "assistant", "content": texte}), bloc({}, "stop")]
-        elif dernier["role"] == "user" and "fiche" in str(dernier.get("content", "")).lower():
-            appel = {
-                "index": 0, "id": "appel1", "type": "function",
-                "function": {"name": "rediger_fiche_recap", "arguments": "{}"},
-            }
-            m = [bloc({"role": "assistant", "tool_calls": [appel]}), bloc({}, "tool_calls")]
-        else:
-            texte = "Bonjour. Quelle est précisément ta problématique ?"
-            m = [bloc({"role": "assistant", "content": texte}), bloc({}, "stop")]
-        return StreamingResponse(sse(m), media_type="text/event-stream")
-
-    @app.post("/api/chat")
-    async def chat(req: fastapi.Request):
-        corps = await req.json()
-        journal.append(corps)
-        date = __import__("datetime").date.today().isoformat()
-        texte = (
-            f"`{date}_fiche_cadrage-terrain.md`\n\n```markdown\n---\ndate: {date}\n"
-            "type: fiche-seance\nprojet: memoire\n---\n\n"
-            f"# Séance du {date} — cadrage du terrain\n\n## Objet de la séance\nTest.\n```\n"
-        )
-        return {"message": {"role": "assistant", "content": texte}}
-
-    return app
-
-
-def lancer_serveur(app, port):
-    import uvicorn
-
-    serveur = uvicorn.Server(uvicorn.Config(app, host="127.0.0.1", port=port, log_level="warning"))
-    fil = threading.Thread(target=serveur.run, daemon=True)
-    fil.start()
-    for _ in range(100):
-        if serveur.started:
-            return serveur
-        time.sleep(0.05)
-    raise RuntimeError("serveur non démarré")
-
-
-def audio_ogg_opus(secondes_parole: float, secondes_silence: float) -> list[bytes]:
-    import sphn
-
-    ecrivain = sphn.OpusStreamWriter(24000)
-    t = np.arange(int(secondes_parole * 24000)) / 24000
-    parole = (0.3 * np.sin(2 * np.pi * 300 * t)).astype(np.float32)
-    signal = np.concatenate([parole, np.zeros(int(secondes_silence * 24000), np.float32)])
-    paquets = []
-    for i in range(0, len(signal), 480):
-        donnees = ecrivain.append_pcm(signal[i : i + 480])
-        if donnees:
-            paquets.append(donnees)
-    return paquets
-
-
-def test_bout_en_bout(coffre_test):
-    pytest.importorskip("gradbot")
-    pytest.importorskip("sphn")
-    import websockets
-
-    from agent.application import creer_app
-
-    notes, recaps = coffre_test
-    avant = empreinte(notes)
-    journal: list = []
-    port_llm, port_app = port_libre(), port_libre()
-    faux = lancer_serveur(faux_ollama_app(journal), port_llm)
-    r = reglages.Reglages(
-        dossier_notes=notes,
-        dossier_recaps=recaps,
-        ollama_adresse=f"http://127.0.0.1:{port_llm}",
-        port=port_app,
-    )
-    reglages.verifier_dossiers(r)
-    app = creer_app(
-        r,
-        moteur_ecoute=moteurs.MoteurEcouteSimulation("Fais la fiche de la séance"),
-        moteur_voix=moteurs.MoteurVoixSimulation(),
-        modele_llm="faux",
-    )
-    serveur = lancer_serveur(app, port_app)
-
-    async def scenario():
-        recus = []
-        async with websockets.connect(f"ws://127.0.0.1:{port_app}/ws/chat", max_size=None) as ws:
-            await ws.send(json.dumps({"type": "start"}))
-
-            async def lire():
-                async for m in ws:
-                    if isinstance(m, str):
-                        recus.append(json.loads(m))
-                    else:
-                        recus.append({"type": "_audio", "n": len(m)})
-
-            lecteur = asyncio.create_task(lire())
-            await asyncio.sleep(2.0)  # salutation du directeur
-            for paquet in audio_ogg_opus(1.5, 4.0):
-                await ws.send(paquet)
-                await asyncio.sleep(0.02)
-            for _ in range(200):
-                if any(m.get("type") == "fiche" and m.get("etat") == "ok" for m in recus):
-                    break
-                await asyncio.sleep(0.1)
-            await ws.send(json.dumps({"type": "stop"}))
-            await asyncio.sleep(0.3)
-            lecteur.cancel()
-        return recus
-
-    try:
-        recus = asyncio.run(scenario())
-    finally:
-        serveur.should_exit = True
-        faux.should_exit = True
-
-    types = [m["type"] for m in recus]
-    assert "_audio" in types, types  # la voix a parlé
-    textes_agent = " ".join(m["text"] for m in recus if m["type"] == "agent_text")
-    assert "problématique" in textes_agent
-    textes_etudiant = " ".join(m["text"] for m in recus if m["type"] == "user_text")
-    assert "fiche" in textes_etudiant.lower()
-    assert any(m.get("type") == "fiche" and m.get("etat") == "ok" for m in recus), recus[-20:]
-
-    # Le LLM a bien reçu les notes dans ses consignes.
-    assert "tiers-lieux" in json.dumps(journal[0], ensure_ascii=False)
-    fiches = list(recaps.glob("*.md"))
-    assert len(fiches) == 1
-    contenu = fiches[0].read_text(encoding="utf-8")
-    assert fiches[0].name.endswith("_fiche_cadrage-terrain.md")
-    assert contenu.startswith("---\ndate:") and "type: fiche-seance" in contenu
-    assert "```" not in contenu
-    # La fiche a été demandée avec le mode de conduite et la transcription.
-    demande_fiche = next(c for c in journal if "options" in c)
-    assert "MODE DE CONDUITE" in demande_fiche["messages"][0]["content"]
-    assert "Fais la fiche" in demande_fiche["messages"][1]["content"]
-    # Les notes n'ont pas bougé d'un octet.
-    assert empreinte(notes) == avant
-
-
-def test_ollama_preparer_affiche_la_progression(caplog):
-    from fastapi.responses import StreamingResponse
-
-    from agent import ollama
-
-    app = fastapi.FastAPI()
-    cree = {}
-
-    @app.get("/api/version")
-    async def version():
-        return {"version": "0.0"}
-
-    @app.get("/api/tags")
-    async def tags():
-        return {"models": []}
-
-    @app.post("/api/pull")
-    async def pull():
-        def flux():
-            yield json.dumps({"status": "pulling manifest"}) + "\n"
-            for fait in range(0, 5_000_000_001, 500_000_000):
-                yield json.dumps({"digest": "a", "total": 5_000_000_000, "completed": fait}) + "\n"
-            yield json.dumps({"status": "success"}) + "\n"
-
-        return StreamingResponse(flux(), media_type="application/x-ndjson")
-
-    @app.post("/api/create")
-    async def create(req: fastapi.Request):
-        cree.update(await req.json())
-        return {"status": "success"}
-
-    port = port_libre()
-    serveur = lancer_serveur(app, port)
-    try:
-        with caplog.at_level("INFO", logger="agent.ollama"):
-            nom = ollama.preparer(f"http://127.0.0.1:{port}", "qwen2.5:7b", 16384)
-    finally:
-        serveur.should_exit = True
-    assert nom == ollama.NOM_MODELE_AGENT
-    assert cree["from"] == "qwen2.5:7b" and cree["parameters"]["num_ctx"] == 16384
-    assert "100 %" in caplog.text and "5.0 Go" in caplog.text
+    s.ajouter("etudiant", "Pour cela , il faut")
+    s.ajouter("directeur", "")
+    assert s.transcription() == "Étudiant : Pour cela, il faut" and s.etudiant_a_parle()
 
 
 def test_premier_port_libre():
@@ -376,88 +187,192 @@ def test_premier_port_libre():
         assert libre is not None and libre != pris
 
 
-def _ecoute_par_phrases_test(transcrites):
-    def prob(bloc):
-        return 0.9 if float(np.abs(bloc).mean()) > 0.01 else 0.1
+# ---------------------------------------------------------------------------
+# Bout en bout : page web simulée ↔ application ↔ faux llama.cpp
+# ---------------------------------------------------------------------------
 
-    def transcrire(audio):
-        transcrites.append(len(audio) / 16000)
-        return "Ma problématique porte sur les tiers-lieux."
-
-    return moteurs.EcouteParPhrases(prob, transcrire, pause_s=0.8)
-
-
-def test_ecoute_par_phrases():
-    transcrites: list = []
-    e = _ecoute_par_phrases_test(transcrites)
-    t = np.arange(1920) / 24000
-    voix = (0.3 * np.sin(2 * np.pi * 300 * t)).astype(np.float32)
-    silence = np.zeros(1920, np.float32)
-    sorties = [e.pas_mots(silence) for _ in range(10)]  # 0,8 s de silence
-    sorties += [e.pas_mots(voix) for _ in range(25)]  # 2 s de parole
-    sorties += [e.pas_mots(silence) for _ in range(15)]  # 1,2 s de pause
-    mots = [m for ms, _ in sorties for m in ms]
-    assert [m for m, _ in mots] == "Ma problématique porte sur les tiers-lieux.".split()
-    assert abs(mots[0][1] - 0.8) < 0.1  # début de la phrase
-    assert 2.0 <= transcrites[0] <= 3.2  # la phrase (avec un peu d'avant et la pause)
-    probas = [p[2] for _, p in sorties]
-    assert probas[0] == 1.0 and probas[15] == 0.05  # silence puis parole
-    i_mots = next(i for i, (ms, _) in enumerate(sorties) if ms)
-    assert probas[i_mots - 1] == 0.6  # pause avant la transcription : ni parole ni fin de tour
-    assert probas[i_mots] == 1.0  # fin de tour annoncée avec les mots
+TRANSCRIPTIONS = [
+    "Peux-tu relire ma note sur la problématique ?",
+    "Fais-moi la fiche de la séance.",
+]
 
 
-def test_nettoyer_transcription():
-    assert moteurs.nettoyer_transcription(" Sous-titres réalisés par la communauté d'Amara.org ") == ""
-    assert moteurs.nettoyer_transcription(" Bonjour. ") == "Bonjour."
+def faux_llamacpp(journal: list):
+    """Imite llama-server : conversation en flux (audio en input_audio), outils, deux espaces."""
+    from fastapi.responses import StreamingResponse
+
+    from agent.cerveau import CONSIGNE_TRANSCRIPTION
+
+    app = fastapi.FastAPI()
+    transcriptions = list(TRANSCRIPTIONS)
+    messages_vocaux = [0]
+
+    def sse(deltas):
+        for d in deltas:
+            yield "data: " + json.dumps({"choices": [{"index": 0, "delta": d}]}) + "\n\n"
+        yield "data: [DONE]\n\n"
+
+    def appel(nom, args):
+        return {"tool_calls": [{"index": 0, "id": f"id_{nom}",
+                                "function": {"name": nom, "arguments": json.dumps(args)}}]}
+
+    @app.post("/v1/chat/completions")
+    async def chat(req: fastapi.Request):
+        corps = await req.json()
+        journal.append(corps)
+        messages = corps["messages"]
+        texte_complet = json.dumps(messages, ensure_ascii=False)
+        if not corps.get("stream"):
+            if CONSIGNE_TRANSCRIPTION in texte_complet:
+                texte = transcriptions.pop(0) if transcriptions else ""
+            elif "fiche récapitulative de clôture" in texte_complet:
+                date = __import__("datetime").date.today().isoformat()
+                texte = (f"`{date}_fiche_cadrage-terrain.md`\n```markdown\n---\ndate: {date}\n"
+                         f"type: fiche-seance\n---\n\n# Séance du {date} — cadrage du terrain\n```")
+            else:
+                texte = "prêt"
+            return {"choices": [{"message": {"role": "assistant", "content": texte}}],
+                    "timings": {"prompt_n": 1, "cache_n": 0}}
+        dernier = messages[-1]
+        audio = isinstance(dernier["content"], list)
+        if dernier["role"] == "tool" and dernier["tool_call_id"] == "id_lire_note":
+            assert "tiers-lieux" in dernier["content"]  # le contenu de la note est bien fourni
+            deltas = [{"content": "Dans ta note Problématique, tu parles des tiers-lieux. "},
+                      {"content": "Qu'entends-tu par travail rural ?"}]
+        elif dernier["role"] == "tool":
+            deltas = [{"content": "C'est noté, la fiche est en cours de rédaction."}]
+        elif audio:
+            messages_vocaux[0] += 1
+            if messages_vocaux[0] == 1:  # 1re phrase : il relit la note demandée
+                deltas = [appel("lire_note", {"nom": "problematique"})]
+            else:  # 2e phrase : « fais-moi la fiche »
+                deltas = [appel("rediger_fiche_recap", {})]
+        else:  # début de séance (ou lecture à l'avance des consignes)
+            deltas = [{"content": "Bonjour ! Reprenons où nous en étions. "},
+                      {"content": "Quelle est ta problématique aujourd'hui ?"}]
+        return StreamingResponse(sse(deltas), media_type="text/event-stream")
+
+    @app.get("/health")
+    async def sante():
+        return {"status": "ok"}
+
+    return app
 
 
-def test_choix_moteur_ecoute():
-    from agent.__main__ import choisir_moteur_ecoute
+def lancer_serveur(app, port):
+    import uvicorn
 
-    r = reglages.Reglages(dossier_notes=pathlib.Path("."), dossier_recaps=pathlib.Path("r"))
-    r.materiel = "cpu"
-    assert choisir_moteur_ecoute(r) == "whisper"
-    r.stt_moteur = "kyutai"
-    assert choisir_moteur_ecoute(r) == "kyutai"
-
-
-def _trames_voix(n):
-    t = np.arange(1920) / 24000
-    voix = (0.3 * np.sin(2 * np.pi * 300 * t)).astype(np.float32)
-    return [voix] * n
+    serveur = uvicorn.Server(uvicorn.Config(app, host="127.0.0.1", port=port, log_level="warning",
+                                            ws_ping_interval=None))
+    fil = threading.Thread(target=serveur.run, daemon=True)
+    fil.start()
+    for _ in range(100):
+        if serveur.started:
+            return serveur
+        time.sleep(0.05)
+    raise RuntimeError("serveur non démarré")
 
 
-def test_ecoute_longue_tirade_par_morceaux():
-    transcrites: list = []
-    e = _ecoute_par_phrases_test(transcrites)
-    silence = np.zeros(1920, np.float32)
-    # 20 s de parole avec une micro-pause de 0,32 s toutes les 4 s, puis une vraie pause.
-    trames = []
-    for _ in range(5):
-        trames += _trames_voix(46) + [silence] * 4
-    sorties = [e.pas_mots(tr) for tr in trames]
-    probas_pendant = [p[2] for _, p in sorties]
-    assert 1.0 not in probas_pendant  # jamais « fin de tour » tant que vous parlez
-    assert len(transcrites) >= 2  # des morceaux ont été livrés en cours de route
-    assert all(d <= 8.5 for d in transcrites)
-    fin = [e.pas_mots(silence) for _ in range(15)]
-    assert any(ms for ms, _ in fin) and fin[-1][1][2] == 1.0
-    assert abs(sum(transcrites) - 20.3) < 1.0  # rien n'est perdu, rien n'est doublé
+def port_libre() -> int:
+    with socket.socket() as s:
+        s.bind(("127.0.0.1", 0))
+        return s.getsockname()[1]
 
 
-def test_ecoute_phrase_conservee_si_redemarrage():
-    transcrites: list = []
-    e = _ecoute_par_phrases_test(transcrites)
-    for tr in _trames_voix(25):  # 2 s de parole
-        e.pas_mots(tr)
-    e.reinitialiser()  # Gradbot redémarre l'écoute en pleine phrase
-    for tr in _trames_voix(10):
-        e.pas_mots(tr)
-    sorties = [e.pas_mots(np.zeros(1920, np.float32)) for _ in range(15)]
-    assert any(ms for ms, _ in sorties)
-    assert transcrites[0] >= 2.8  # les 2 s d'avant le redémarrage sont incluses
+def empreinte(dossier: pathlib.Path) -> dict:
+    return {
+        str(p.relative_to(dossier)): (hashlib.sha256(p.read_bytes()).hexdigest(), p.stat().st_mtime_ns)
+        for p in sorted(dossier.rglob("*"))
+        if p.is_file()
+    }
 
+
+def test_seance_complete(coffre_test):
+    import websockets
+
+    from agent.application import Agent, creer_app
+    from agent.cerveau import CerveauLlamaCpp
+
+    notes, recaps = coffre_test
+    avant = empreinte(notes)
+    journal: list = []
+    port_llm, port_app = port_libre(), port_libre()
+    faux = lancer_serveur(faux_llamacpp(journal), port_llm)
+    r = reglages.Reglages(dossier_notes=notes, dossier_recaps=recaps, pause_s=0.8, port=port_app)
+    reglages.verifier_dossiers(r)
+    agent = Agent(r, CerveauLlamaCpp(f"http://127.0.0.1:{port_llm}"), moteurs.MoteurVoixSimulation(),
+                  detecteur_energie)
+    agent.prechauffer()
+    serveur = lancer_serveur(creer_app(agent), port_app)
+
+    async def parler(ws, signal):
+        for i in range(0, len(signal), 1600):  # paquets de 100 ms, comme la page web
+            await ws.send(moteurs.float_vers_pcm16(signal[i : i + 1600]))
+            await asyncio.sleep(0.1)  # en temps réel
+
+    async def scenario():
+        recus, audio = [], [0]
+        async with websockets.connect(f"ws://127.0.0.1:{port_app}/ws/seance", max_size=None) as ws:
+            await ws.send(json.dumps({"type": "debut"}))
+
+            async def attendre(condition, delai=30):
+                fin = time.monotonic() + delai
+                while time.monotonic() < fin:
+                    if any(condition(m) for m in recus):
+                        return
+                    await asyncio.sleep(0.05)
+                raise AssertionError(f"attendu non reçu ; derniers messages : {recus[-8:]}")
+
+            async def lire():
+                async for m in ws:
+                    if isinstance(m, bytes):
+                        audio[0] += len(m)
+                    else:
+                        recus.append(json.loads(m))
+
+            lecteur = asyncio.create_task(lire())
+            await attendre(lambda m: m.get("etat") == "ecoute")
+            await parler(ws, np.concatenate([ton(1.5), np.zeros(16000, np.float32)]))
+            await attendre(lambda m: "travail rural" in m.get("texte", ""))
+            recus.clear()
+            await attendre(lambda m: m.get("etat") == "ecoute")
+            await parler(ws, np.concatenate([ton(1.5), np.zeros(16000, np.float32)]))
+            await attendre(lambda m: m.get("type") == "fiche" and m.get("etat") == "ok", 60)
+            fiche = next(m for m in recus if m.get("type") == "fiche" and m.get("etat") == "ok")
+            await ws.send(json.dumps({"type": "stop"}))
+            lecteur.cancel()
+        return recus, audio[0], fiche
+
+    try:
+        recus, octets_audio, fiche = asyncio.run(scenario())
+    finally:
+        serveur.should_exit = True
+        faux.should_exit = True
+
+    assert octets_audio > 0  # la voix du directeur a été envoyée à la page
+    assert fiche["fichier"].endswith("_fiche_cadrage-terrain.md")
+    contenu = (recaps / fiche["fichier"]).read_text(encoding="utf-8")
+    assert contenu.startswith("---") and "fiche-seance" in contenu
+    # La retranscription des phrases de l'étudiant a été affichée.
+    assert any(m.get("type") == "etudiant" and m.get("texte") == TRANSCRIPTIONS[1] for m in recus)
+
+    flux = [c for c in journal if c.get("stream")]
+    # Lecture à l'avance : consignes lues dans l'espace de conversation, un seul mot produit.
+    assert flux[0]["id_slot"] == 0 and flux[0]["max_tokens"] == 1
+    systeme = flux[0]["messages"][0]["content"]
+    assert "MODE DE CONDUITE" in systeme and "tiers-lieux" in systeme
+    # La séance réutilise exactement les mêmes consignes (pas de relecture).
+    assert all(c["messages"][0]["content"] == systeme for c in flux)
+    assert all(c["id_slot"] == 0 and c["cache_prompt"] for c in flux)
+    vocal = next(c for c in flux if isinstance(c["messages"][-1]["content"], list))
+    partie = next(p for p in vocal["messages"][-1]["content"] if p["type"] == "input_audio")
+    assert __import__("base64").b64decode(partie["input_audio"]["data"])[:4] == b"RIFF"
+    assert {o["function"]["name"] for o in vocal["tools"]} >= {"lire_note", "rediger_fiche_recap"}
+    # Retranscriptions et fiche dans l'espace annexe (la conversation reste en mémoire).
+    annexes = [c for c in journal if not c.get("stream")]
+    assert annexes and all(c["id_slot"] == 1 for c in annexes)
+    # Les notes n'ont pas bougé d'un octet.
+    assert empreinte(notes) == avant
 
 def test_extraire_fiche():
     import datetime as dt
