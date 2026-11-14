@@ -39,21 +39,13 @@ def ecouter_clavier(boucle: asyncio.AbstractEventLoop, evenement: asyncio.Event)
 
 
 def preparer_cerveau(r):
-    """Prépare le cerveau qui écoute. Renvoie (cerveau, processus llama.cpp ou None)."""
-    from .cerveau import CerveauLlamaCpp, CerveauOllama, lancer_serveur_llamacpp
+    """Prépare le cerveau qui écoute. Renvoie (cerveau, serveur llama.cpp ou None)."""
+    from .cerveau import CerveauOllama, lancer_serveur_llamacpp
     from .reglages import DOSSIER_ALLOIA
 
     if r.cerveau_moteur == "llamacpp":
-        processus = lancer_serveur_llamacpp(r, DOSSIER_ALLOIA / "llama-server.log")
-        cerveau = CerveauLlamaCpp(f"http://127.0.0.1:{r.llamacpp_port}", r.ollama_temperature)
-        try:
-            debut = time.monotonic()
-            cerveau.rediger([{"role": "user", "content": "Dis seulement : prêt."}])  # mise en route
-            log.info("Première réponse du cerveau en %.1f s.", time.monotonic() - debut)
-        except Exception:
-            processus.terminate()
-            raise
-        return cerveau, processus
+        serveur = lancer_serveur_llamacpp(r, DOSSIER_ALLOIA / "llama-server.log")
+        return serveur.cerveau, serveur
     preparer_ollama(r)
     return CerveauOllama(
         r.ollama_adresse, r.ollama_modele, r.ollama_contexte, r.ollama_temperature, r.ollama_reflexion
@@ -101,7 +93,7 @@ def preparer_voix(r):
     return voix.VoixPhonon(r.voix_modele, r.voix_nom, r.voix_vitesse)
 
 
-async def boucle_principale(r, combine, voix_agent, detecteur, cerveau) -> None:
+async def boucle_principale(r, combine, voix_agent, detecteur, cerveau, serveur=None) -> None:
     from . import doc
     from .appel import Appel, attendre_decroche
 
@@ -113,10 +105,15 @@ async def boucle_principale(r, combine, voix_agent, detecteur, cerveau) -> None:
         log.info("=== En attente d'un appel : parlez dans le combiné (ou appuyez sur Entrée). ===")
         cause = await attendre_decroche(combine, detecteur, r.parole_pour_decrocher_s, clavier)
         log.info("Décroché (%s) : début de l'appel.", cause)
+        if serveur is not None and not serveur.vivant():
+            log.warning("Le cerveau s'était arrêté : redémarrage avant l'appel…")
+            await asyncio.to_thread(serveur.reparer)
         # Le mode de conduite est relu à chaque appel : une modification s'applique tout de suite.
         consignes = r.mode_de_conduite.read_text(encoding="utf-8-sig")
         try:
-            conv = await Appel(r, consignes, voix_agent, detecteur, cerveau).derouler(combine, clavier)
+            reparer = serveur.reparer if serveur is not None else None
+            appel = Appel(r, consignes, voix_agent, detecteur, cerveau, reparer)
+            conv = await appel.derouler(combine, clavier)
         except Exception:  # noqa: BLE001
             log.exception("L'appel s'est mal terminé")
             await asyncio.sleep(2)
@@ -161,18 +158,18 @@ async def principal(args) -> int:
     else:
         log.info("Étape 1/3 : le cerveau qui écoute (Ollama, %s).", r.ollama_modele)
     try:
-        cerveau, processus = await asyncio.to_thread(preparer_cerveau, r)
+        cerveau, serveur = await asyncio.to_thread(preparer_cerveau, r)
     except ollama.ErreurOllama as exc:
         log.error("PROBLÈME AVEC LE CERVEAU :\n%s", exc)
         return 1
     try:
-        return await suite(r, cerveau)
+        return await suite(r, cerveau, serveur)
     finally:
-        if processus is not None:
-            processus.terminate()
+        if serveur is not None:
+            serveur.arreter()
 
 
-async def suite(r, cerveau) -> int:
+async def suite(r, cerveau, serveur) -> int:
     from agent import ollama
 
     from . import audio
@@ -209,7 +206,7 @@ async def suite(r, cerveau) -> int:
         return 1
     log.info("Les documentations seront écrites dans %s", r.dossier_docs)
     try:
-        await boucle_principale(r, combine, voix_agent, detecteur, cerveau)
+        await boucle_principale(r, combine, voix_agent, detecteur, cerveau, serveur)
     finally:
         await combine.arreter()
     return 0

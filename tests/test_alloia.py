@@ -237,3 +237,32 @@ def test_appel_complet(tmp_path, moteur):
     assert chemin is not None and chemin.name.endswith("_lampe-en-contreplaque.md")
     contenu = chemin.read_text(encoding="utf-8")
     assert contenu.startswith("---") and "Transcription de l'appel" in contenu
+
+
+def test_serveur_llamacpp_passe_au_mode_econome_et_redemarre(tmp_path):
+    import shutil
+    import sys
+
+    from alloia.cerveau import PROFILS_MEMOIRE, ServeurLlamaCpp
+
+    faux = tmp_path / "llama-server"
+    shutil.copy(RACINE / "tests" / "faux_llama_server.py", faux)
+    faux.write_text(f"#!{sys.executable}\n" + faux.read_text().split("\n", 1)[1])
+    faux.chmod(0o755)
+    (tmp_path / "m.gguf").touch()
+    (tmp_path / "p.gguf").touch()
+    r = Reglages(dossier_docs=tmp_path, llamacpp_serveur=faux, llamacpp_modele=tmp_path / "m.gguf",
+                 llamacpp_mmproj=tmp_path / "p.gguf", llamacpp_port=port_libre())
+    serveur = ServeurLlamaCpp(r, tmp_path / "journal.log")
+    try:
+        serveur.demarrer()
+        # Le message vocal de vérification a fait tomber les deux premiers modes.
+        assert serveur.profil == len(PROFILS_MEMOIRE) - 1 and serveur.vivant()
+        assert "--no-mmproj-offload" in serveur.processus.args
+        serveur.processus.kill()  # llama.cpp s'arrête pendant un appel…
+        serveur.processus.wait()
+        assert not serveur.vivant()
+        serveur.reparer()  # … et AlloIA le redémarre
+        assert serveur.vivant()
+    finally:
+        serveur.arreter()

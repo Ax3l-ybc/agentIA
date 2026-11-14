@@ -54,6 +54,7 @@ ADAPTATION_ORALE = """
 CONSIGNE_VOCALE = "(Message vocal du maker. Réponds-lui directement, sans répéter ses paroles.)"
 DECROCHE = "(Le maker vient de décrocher le combiné. Commence l'appel.)"
 RELANCE = "(Le maker ne dit plus rien depuis un moment. Relance-le gentiment, en une phrase.)"
+EXCUSE = "Désolé, j'ai eu un petit souci. Peux-tu répéter ce que tu viens de dire ?"
 
 _AU_REVOIR = re.compile(r"\b(au revoir|bonne journée|bonne soirée|à plus tard|à bientôt|ciao)\b", re.I)
 _EMOJIS = re.compile("[\U0001F000-\U0001FAFF☀-➿]")
@@ -124,11 +125,12 @@ async def attendre_decroche(
 
 
 class Appel:
-    def __init__(self, r: Reglages, consignes: str, voix, detecteur, cerveau):
+    def __init__(self, r: Reglages, consignes: str, voix, detecteur, cerveau, reparer=None):
         self.r = r
         self.systeme = consignes.strip() + "\n\n" + ADAPTATION_ORALE.strip()
         self.voix = voix
         self.cerveau = cerveau  # CerveauLlamaCpp ou CerveauOllama (alloia/cerveau.py)
+        self.reparer = reparer  # redémarre le cerveau s'il s'est arrêté (llama.cpp)
         self.detecteur = detecteur
         self.historique: list[dict] = []  # messages texte (sans audio) des tours précédents
         self.transcriptions: set[asyncio.Task] = set()
@@ -168,6 +170,15 @@ class Appel:
             m = await file.get()
             if isinstance(m, Exception):
                 log.error("Le cerveau n'a pas répondu : %s", m)
+                if self.reparer is not None and not reponse:
+                    log.warning("Redémarrage du cerveau en mode plus économe…")
+                    await self.voix.dire("Désolé, une petite seconde.", combine)
+                    try:
+                        await asyncio.to_thread(self.reparer)
+                        reponse = EXCUSE
+                        await self.voix.dire(EXCUSE, combine)
+                    except Exception as exc:  # noqa: BLE001
+                        log.error("Le cerveau n'a pas pu redémarrer : %s", exc)
                 break
             phrases: list[str] = []
             if m is None:
