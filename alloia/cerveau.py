@@ -139,43 +139,125 @@ class CerveauLlamaCpp:
             return False
 
 
+# Réglages essayés dans l'ordre si la puce graphique manque de mémoire au démarrage.
+PROFILS_MEMOIRE = [
+    {"nom": "normal", "contexte": None, "args": ["-b", "512", "-ub", "256"]},
+    {"nom": "économe", "contexte": 2048, "args": ["-b", "256", "-ub", "128"]},
+    {"nom": "très économe (module audio hors de la puce graphique)", "contexte": 2048,
+     "args": ["-b", "256", "-ub", "128", "--no-mmproj-offload"]},
+]
+MANQUE_MEMOIRE = ("out of memory", "NvMapMem", "failed to allocate", "cudaMalloc failed")
+
+
+def memoire_disponible_go() -> float | None:
+    try:
+        for ligne in pathlib.Path("/proc/meminfo").read_text().splitlines():
+            if ligne.startswith("MemAvailable:"):
+                return int(ligne.split()[1]) / 1024 / 1024
+    except OSError:
+        pass
+    return None
+
+
+def gros_consommateurs(n: int = 6) -> str:
+    """Les programmes qui occupent le plus de mémoire (pour aider au diagnostic)."""
+    try:
+        sortie = subprocess.run(
+            ["ps", "-eo", "rss=,comm=", "--sort=-rss"], capture_output=True, text=True, timeout=5
+        ).stdout.splitlines()[:n]
+    except (OSError, subprocess.SubprocessError):
+        return ""
+    lignes = []
+    for ligne in sortie:
+        rss, _, nom = ligne.strip().partition(" ")
+        if rss.isdigit():
+            lignes.append(f"    {int(rss) / 1024 / 1024:5.2f} Go  {nom.strip()}")
+    return "\n".join(lignes)
+
+
+def vider_cache_memoire() -> None:
+    """Vide le cache des fichiers (autorisé sans mot de passe par jetson/installer.sh)."""
+    try:
+        subprocess.run(["sudo", "-n", "/usr/local/sbin/alloia-vider-cache"],
+                       capture_output=True, timeout=30)
+    except (OSError, subprocess.SubprocessError):
+        pass
+
+
 def lancer_serveur_llamacpp(r, journal: pathlib.Path) -> subprocess.Popen:
-    """Démarre llama-server avec Gemma 4 E2B (puce graphique), et attend qu'il soit prêt."""
+    """Démarre llama-server avec Gemma 4 E2B (puce graphique), et attend qu'il soit prêt.
+
+    Si la puce graphique manque de mémoire, réessaie avec des réglages plus économes.
+    """
     serveur, modele, mmproj = r.llamacpp_serveur, r.llamacpp_modele, r.llamacpp_mmproj
     for nom, chemin in (("le serveur llama.cpp", serveur), ("le modèle", modele), ("le module audio", mmproj)):
         if not chemin.exists():
             raise ErreurCerveau(
                 f"Fichier introuvable pour {nom} : {chemin}\nRelancez ./jetson/installer.sh."
             )
-    commande = [
-        str(serveur),
-        "-m", str(modele),
-        "--mmproj", str(mmproj),
-        "-c", str(r.llamacpp_contexte),
-        "-ngl", "99",              # tout le modèle sur la puce graphique
-        "--reasoning", "off",      # pas de « réflexion » silencieuse avant de répondre
-        "--jinja",                 # modèle de conversation de Gemma 4 (outils)
-        "-fa", "on",               # attention plus rapide et plus économe en mémoire
-        "--host", "127.0.0.1",
-        "--port", str(r.llamacpp_port),
-        "-np", "1",                # une seule conversation à la fois
-    ]
+    dispo = memoire_disponible_go()
+    if dispo is not None:
+        log.info("Mémoire disponible avant de charger le cerveau : %.1f Go.", dispo)
+        if dispo < 4.5:
+            log.warning(
+                "C'est peu : le cerveau a besoin d'environ 4 Go. Programmes qui occupent le plus "
+                "de mémoire :\n%s", gros_consommateurs()
+            )
     journal.parent.mkdir(parents=True, exist_ok=True)
     env = dict(os.environ)
     env["LD_LIBRARY_PATH"] = f"{serveur.parent}:{env.get('LD_LIBRARY_PATH', '')}"
-    log.info("Démarrage de llama.cpp (journal : %s)…", journal)
-    processus = subprocess.Popen(
-        commande, stdout=open(journal, "ab"), stderr=subprocess.STDOUT, env=env
-    )
     cerveau = CerveauLlamaCpp(f"http://127.0.0.1:{r.llamacpp_port}", r.ollama_temperature)
-    debut = time.monotonic()
-    while not cerveau.pret():
-        if processus.poll() is not None:
-            fin = journal.read_text(errors="replace")[-1500:]
-            raise ErreurCerveau(f"llama.cpp s'est arrêté au démarrage. Fin du journal :\n{fin}")
-        if time.monotonic() - debut > 300:
-            processus.terminate()
-            raise ErreurCerveau("llama.cpp met plus de 5 minutes à démarrer.")
-        time.sleep(1)
-    log.info("Cerveau prêt en %.0f s.", time.monotonic() - debut)
-    return processus
+    derniere_fin = ""
+    for i, profil in enumerate(PROFILS_MEMOIRE):
+        if i:
+            log.warning("La puce graphique manque de mémoire : nouvel essai en mode %s.", profil["nom"])
+            vider_cache_memoire()
+            time.sleep(2)
+        contexte = min(r.llamacpp_contexte, profil["contexte"] or r.llamacpp_contexte)
+        commande = [
+            str(serveur),
+            "-m", str(modele),
+            "--mmproj", str(mmproj),
+            "-c", str(contexte),
+            "-ngl", "99",              # tout le modèle sur la puce graphique
+            "--reasoning", "off",      # pas de « réflexion » silencieuse avant de répondre
+            "--jinja",                 # modèle de conversation de Gemma 4 (outils)
+            "-fa", "on",               # attention plus rapide et plus économe en mémoire
+            "--cache-ram", "0",        # pas de cache de conversations en mémoire vive (8 Go sinon)
+            "--host", "127.0.0.1",
+            "--port", str(r.llamacpp_port),
+            "-np", "1",                # une seule conversation à la fois
+            *profil["args"],
+        ]
+        debut_journal = journal.stat().st_size if journal.exists() else 0
+        log.info("Démarrage de llama.cpp (mode %s, contexte %d ; journal : %s)…",
+                 profil["nom"], contexte, journal)
+        processus = subprocess.Popen(
+            commande, stdout=open(journal, "ab"), stderr=subprocess.STDOUT, env=env
+        )
+        debut = time.monotonic()
+        while not cerveau.pret():
+            if processus.poll() is not None:
+                break
+            if time.monotonic() - debut > 300:
+                processus.terminate()
+                raise ErreurCerveau("llama.cpp met plus de 5 minutes à démarrer.")
+            time.sleep(1)
+        else:
+            log.info("Cerveau prêt en %.0f s.", time.monotonic() - debut)
+            return processus
+        with open(journal, "rb") as f:
+            f.seek(debut_journal)
+            texte = f.read().decode("utf-8", "replace")
+        derniere_fin = texte[-1500:]
+        if not any(m in texte for m in MANQUE_MEMOIRE):
+            break  # autre erreur : inutile de réessayer
+    message = f"llama.cpp s'est arrêté au démarrage. Fin du journal :\n{derniere_fin}"
+    if any(m in derniere_fin for m in MANQUE_MEMOIRE):
+        message += (
+            "\n\nLa puce graphique manque de mémoire, même avec les réglages économes."
+            f"\nProgrammes qui occupent le plus de mémoire :\n{gros_consommateurs()}"
+            "\nFermez-les (navigateur, autre AlloIA, Ollama…) ou passez sans bureau graphique "
+            "(voir le README, « Mémoire de la carte »)."
+        )
+    raise ErreurCerveau(message)
