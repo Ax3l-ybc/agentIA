@@ -182,6 +182,12 @@ sudo systemctl set-default multi-user.target
 
 Puis redémarrez. Pour retrouver le bureau : `sudo systemctl set-default graphical.target`.
 
+AlloIA démarre directement en mode **très économe** (le module qui écoute la voix tourne sur
+le processeur) : c'est le seul qui tient avec le bureau graphique, et cela évite deux essais
+ratés à chaque lancement. Si vous avez désactivé le bureau, vous pouvez essayer plus rapide en
+mettant `mode: 'auto'` dans la partie `cerveau > llamacpp` de `alloia.yaml` : AlloIA essaiera
+alors du plus rapide au plus économe.
+
 ## En cas de problème
 
 | Ce que vous voyez | Que faire |

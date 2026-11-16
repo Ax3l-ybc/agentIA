@@ -29,6 +29,9 @@ class Reglages:
     llamacpp_mmproj: pathlib.Path = DOSSIER_ALLOIA / "modeles" / "mmproj-F16.gguf"
     llamacpp_contexte: int = 4096
     llamacpp_port: int = 8090
+    # Réglage mémoire de départ : "tres_econome" (défaut), "econome", "normal" ou "auto"
+    # ("auto" = du plus rapide au plus économe, jusqu'à ce que ça tienne en mémoire).
+    llamacpp_mode: str = "tres_econome"
     ollama_adresse: str = "http://127.0.0.1:11434"
     ollama_modele: str = "gemma4:e2b"
     ollama_contexte: int = 8192
@@ -111,6 +114,7 @@ def charger(fichier: pathlib.Path = FICHIER_CONFIG, perso: pathlib.Path | None =
         llamacpp_mmproj=_chemin(lc.get("mmproj"), d.llamacpp_mmproj),
         llamacpp_contexte=val(lc, "taille_contexte", d.llamacpp_contexte, int),
         llamacpp_port=val(lc, "port", d.llamacpp_port, int),
+        llamacpp_mode=str(lc.get("mode") or d.llamacpp_mode).lower().replace("è", "e").replace(" ", "_"),
         ollama_adresse=str(val(o, "adresse", d.ollama_adresse, str)).rstrip("/"),
         ollama_modele=val(o, "modele", d.ollama_modele, str),
         ollama_contexte=val(o, "taille_contexte", d.ollama_contexte, int),

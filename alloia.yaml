@@ -28,6 +28,11 @@ cerveau:
     # Mémoire de travail : 4096 suffit pour un appel ; plus = plus de mémoire utilisée.
     taille_contexte: 4096
     port: 8090
+    # Réglage mémoire : 'tres_econome' (module audio sur le processeur : démarre du premier
+    # coup sur la Jetson Orin Nano), 'econome', 'normal', ou 'auto' (essaie du plus rapide
+    # au plus économe : utile seulement si la carte a plus de mémoire libre, par exemple
+    # sans bureau graphique).
+    mode: 'tres_econome'
 
 # --- Ollama (seulement si cerveau > moteur: 'ollama') ----------------
 ollama:

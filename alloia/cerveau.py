@@ -146,6 +146,9 @@ PROFILS_MEMOIRE = [
     {"nom": "très économe (module audio hors de la puce graphique)", "contexte": 2048,
      "args": ["-b", "256", "-ub", "128", "--no-mmproj-offload"]},
 ]
+# Où commencer selon le réglage « mode » (alloia.yaml) ; « auto » essaie du plus rapide au
+# plus économe. Sur la Jetson Orin Nano avec bureau graphique, seul le très économe tient.
+PROFIL_DE_DEPART = {"auto": 0, "normal": 0, "econome": 1, "tres_econome": 2}
 MANQUE_MEMOIRE = ("out of memory", "NvMapMem", "failed to allocate", "cudaMalloc failed")
 
 
@@ -201,7 +204,7 @@ class ServeurLlamaCpp:
     def __init__(self, r, journal: pathlib.Path):
         self.r = r
         self.journal = journal
-        self.profil = 0
+        self.profil = PROFIL_DE_DEPART.get(getattr(r, "llamacpp_mode", "auto"), len(PROFILS_MEMOIRE) - 1)
         self.processus: subprocess.Popen | None = None
         self.cerveau = CerveauLlamaCpp(f"http://127.0.0.1:{r.llamacpp_port}", r.ollama_temperature)
 

@@ -252,7 +252,7 @@ def test_serveur_llamacpp_passe_au_mode_econome_et_redemarre(tmp_path):
     (tmp_path / "m.gguf").touch()
     (tmp_path / "p.gguf").touch()
     r = Reglages(dossier_docs=tmp_path, llamacpp_serveur=faux, llamacpp_modele=tmp_path / "m.gguf",
-                 llamacpp_mmproj=tmp_path / "p.gguf", llamacpp_port=port_libre())
+                 llamacpp_mmproj=tmp_path / "p.gguf", llamacpp_port=port_libre(), llamacpp_mode="auto")
     serveur = ServeurLlamaCpp(r, tmp_path / "journal.log")
     try:
         serveur.demarrer()
@@ -264,5 +264,30 @@ def test_serveur_llamacpp_passe_au_mode_econome_et_redemarre(tmp_path):
         assert not serveur.vivant()
         serveur.reparer()  # … et AlloIA le redémarre
         assert serveur.vivant()
+    finally:
+        serveur.arreter()
+
+
+def test_serveur_llamacpp_demarre_directement_en_tres_econome(tmp_path):
+    import shutil
+    import sys
+
+    from alloia.cerveau import ServeurLlamaCpp
+
+    faux = tmp_path / "llama-server"
+    shutil.copy(RACINE / "tests" / "faux_llama_server.py", faux)
+    faux.write_text(f"#!{sys.executable}\n" + faux.read_text().split("\n", 1)[1])
+    faux.chmod(0o755)
+    (tmp_path / "m.gguf").touch()
+    (tmp_path / "p.gguf").touch()
+    r = Reglages(dossier_docs=tmp_path, llamacpp_serveur=faux, llamacpp_modele=tmp_path / "m.gguf",
+                 llamacpp_mmproj=tmp_path / "p.gguf", llamacpp_port=port_libre())
+    assert r.llamacpp_mode == "tres_econome"  # réglage par défaut
+    serveur = ServeurLlamaCpp(r, tmp_path / "journal.log")
+    try:
+        serveur.demarrer()
+        # Un seul démarrage, directement avec le module audio hors de la puce graphique.
+        assert "--no-mmproj-offload" in serveur.processus.args
+        assert (tmp_path / "journal.log").read_text().count("out of memory") == 0
     finally:
         serveur.arreter()
