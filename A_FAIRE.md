@@ -37,3 +37,16 @@ Pour que la version qui fonctionne soit celle qu'on trouve en premier sur GitHub
 - fusionner `AlloIA-rapide` dans la branche principale du dépôt, ou la définir comme branche
   par défaut ;
 - garder les anciennes branches (`AlloIA`, `AlloIA-omni`) pour mémoire, ou les supprimer.
+
+## 5. Le socle imprimé en 3D
+
+Le programme sait déjà lire un bouton sous le combiné (voir « Le bouton du socle » dans le
+README). Reste à dessiner le socle :
+
+- un berceau à la forme du combiné, pour qu'il retombe toujours au même endroit ;
+- un logement pour le micro-rupteur à languette, avec des trous oblongs pour régler sa
+  hauteur ;
+- du lest (rondelles, sable) pour que le socle ne se soulève pas avec le combiné ;
+- une goulotte pour le cordon du combiné et les fils du bouton.
+
+Il faudra les mesures du combiné (longueur, largeur, forme des deux bouts).

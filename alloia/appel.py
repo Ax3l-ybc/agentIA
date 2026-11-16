@@ -135,6 +135,7 @@ class Appel:
         self.historique: list[dict] = []  # messages texte (sans audio) des tours précédents
         self.transcriptions: set[asyncio.Task] = set()
         self.raccrocher = False
+        self.raccroche: asyncio.Event | None = None  # combiné reposé sur le socle (bouton)
 
     # --------------------------------------------------------------- un tour
 
@@ -197,6 +198,8 @@ class Appel:
                 tampon += m["texte"]
                 phrases, tampon = couper_phrases(tampon, premiere)
             for p in phrases:
+                if self.raccroche is not None and self.raccroche.is_set():
+                    continue  # combiné reposé : on finit la réponse en silence (pour la doc)
                 texte = _EMOJIS.sub("", nettoyer_pour_voix(p))
                 if not re.search(r"\w", texte):
                     continue
@@ -242,8 +245,11 @@ class Appel:
 
     # ------------------------------------------------------------ l'appel
 
-    async def derouler(self, combine: Combine, evenement_clavier: asyncio.Event) -> Conversation:
+    async def derouler(self, combine: Combine, evenement_clavier: asyncio.Event,
+                       raccroche: asyncio.Event | None = None) -> Conversation:
+        """Déroule l'appel. `raccroche` : posé quand le combiné est reposé sur le socle."""
         r = self.r
+        self.raccroche = raccroche
         conv = Conversation(debut=datetime.datetime.now())
         decoupeur = DecoupeurPhrases(self.detecteur, pause_s=r.pause_s)
         phrases: asyncio.Queue = asyncio.Queue()
@@ -268,8 +274,14 @@ class Appel:
                     # La personne a fini de parler `pause_s` avant que la phrase soit livrée.
                     phrases.put_nowait((p, time.monotonic() - r.pause_s))
 
+        async def surveiller_socle():
+            await raccroche.wait()
+            log.info("Combiné reposé : fin de l'appel.")
+            combine.vider_haut_parleur()  # la voix s'arrête net
+
         accueil_fini = asyncio.Event()
         ecoute = asyncio.create_task(ecouter())
+        socle = asyncio.create_task(surveiller_socle()) if raccroche is not None else None
         try:
             await self.tour(combine, conv, None, DECROCHE)
             while combine.agent_parle():  # on écoute à nouveau une fois la salutation dite
@@ -283,6 +295,9 @@ class Appel:
                 except asyncio.TimeoutError:
                     audio = None
                 maintenant = time.monotonic()
+                if raccroche is not None and raccroche.is_set():
+                    conv.raison_fin = "combiné raccroché"
+                    break
                 if combine.agent_parle():
                     derniere_activite = maintenant
                 if audio is not None:
@@ -322,6 +337,8 @@ class Appel:
         finally:
             fin.set()
             ecoute.cancel()
+            if socle is not None:
+                socle.cancel()
             await self._attendre_transcriptions(30)
             combine.vider_haut_parleur()
         log.info("Fin de l'appel (%s), %d échanges.", conv.raison_fin, len(conv.echanges))

@@ -93,18 +93,28 @@ def preparer_voix(r):
     return voix.VoixPhonon(r.voix_modele, r.voix_nom, r.voix_vitesse)
 
 
-async def boucle_principale(r, combine, voix_agent, detecteur, cerveau, serveur=None) -> None:
+async def boucle_principale(r, combine, voix_agent, detecteur, cerveau, serveur=None, bouton=None) -> None:
     from . import doc
     from .appel import Appel, attendre_decroche
+    from .bouton import attendre_decroche_bouton
 
     clavier = asyncio.Event()
     ecouter_clavier(asyncio.get_running_loop(), clavier)
     redactions: set[asyncio.Task] = set()
 
     while True:
-        log.info("=== En attente d'un appel : parlez dans le combiné (ou appuyez sur Entrée). ===")
-        cause = await attendre_decroche(combine, detecteur, r.parole_pour_decrocher_s, clavier)
+        if bouton is not None:
+            if bouton.decroche:
+                log.info("Le combiné n'est pas sur son socle : reposez-le pour être prêt.")
+                await bouton.evt_pose.wait()
+            log.info("=== En attente d'un appel : décrochez le combiné (ou appuyez sur Entrée). ===")
+            cause = await attendre_decroche_bouton(bouton, clavier)
+        else:
+            log.info("=== En attente d'un appel : parlez dans le combiné (ou appuyez sur Entrée). ===")
+            cause = await attendre_decroche(combine, detecteur, r.parole_pour_decrocher_s, clavier)
         log.info("Décroché (%s) : début de l'appel.", cause)
+        # Seul un vrai décroché peut être terminé en reposant le combiné.
+        raccroche = bouton.evt_pose if bouton is not None and cause == "bouton" else None
         if serveur is not None and not serveur.vivant():
             log.warning("Le cerveau s'était arrêté : redémarrage avant l'appel…")
             await asyncio.to_thread(serveur.reparer)
@@ -113,7 +123,7 @@ async def boucle_principale(r, combine, voix_agent, detecteur, cerveau, serveur=
         try:
             reparer = serveur.reparer if serveur is not None else None
             appel = Appel(r, consignes, voix_agent, detecteur, cerveau, reparer)
-            conv = await appel.derouler(combine, clavier)
+            conv = await appel.derouler(combine, clavier, raccroche)
         except Exception:  # noqa: BLE001
             log.exception("L'appel s'est mal terminé")
             await asyncio.sleep(2)
@@ -145,6 +155,11 @@ async def principal(args) -> int:
         return 1
     if r.jeton_hf:
         os.environ["HF_TOKEN"] = r.jeton_hf
+
+    if args.test_bouton:
+        from . import bouton
+
+        return await asyncio.to_thread(bouton.tester, r.bouton_broche, r.bouton_valeur_pose)
 
     if args.test_audio:
         try:
@@ -204,10 +219,24 @@ async def suite(r, cerveau, serveur) -> int:
     except RuntimeError as exc:
         log.error("PROBLÈME DE SON :\n%s", exc)
         return 1
+    bouton = None
+    if r.bouton_actif:
+        from .bouton import BoutonSocle, ErreurBouton, ouvrir_broche
+
+        try:
+            bouton = BoutonSocle(ouvrir_broche(r.bouton_broche), r.bouton_valeur_pose)
+            bouton.demarrer()
+            log.info("Bouton du socle : broche %d, combiné %s.", r.bouton_broche,
+                     "décroché" if bouton.decroche else "posé")
+        except ErreurBouton as exc:
+            log.error("PROBLÈME DE BOUTON (l'appel commencera à la voix) :\n%s", exc)
+            bouton = None
     log.info("Les documentations seront écrites dans %s", r.dossier_docs)
     try:
-        await boucle_principale(r, combine, voix_agent, detecteur, cerveau, serveur)
+        await boucle_principale(r, combine, voix_agent, detecteur, cerveau, serveur, bouton)
     finally:
+        if bouton is not None:
+            bouton.arreter()
         await combine.arreter()
     return 0
 
@@ -245,6 +274,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(prog="alloia")
     parser.add_argument("--lister-audio", action="store_true", help="liste les cartes son")
     parser.add_argument("--test-audio", action="store_true", help="teste le micro et le haut-parleur")
+    parser.add_argument("--test-bouton", action="store_true", help="teste le bouton du socle")
     args = parser.parse_args()
     if args.lister_audio:
         from .audio import lister_peripheriques

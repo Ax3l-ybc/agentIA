@@ -53,6 +53,10 @@ class Reglages:
     relance_apres_s: float = 12.0
     fin_apres_silence_s: float = 60.0
     duree_max_min: float = 25.0
+    # Bouton du socle (connecteur 40 broches de la Jetson) : soulever le combiné lance l'appel.
+    bouton_actif: bool = False
+    bouton_broche: int = 15
+    bouton_valeur_pose: int = 0
     port: int = 8765
 
 
@@ -98,6 +102,7 @@ def charger(fichier: pathlib.Path = FICHIER_CONFIG, perso: pathlib.Path | None =
     v = brut.get("voix") or {}
     a = brut.get("audio") or {}
     ap = brut.get("appel") or {}
+    b = brut.get("bouton") or {}
     d = Reglages(dossier_docs=_chemin(brut.get("dossier_docs"), RACINE / "docs"))
 
     def val(dico, cle, defaut, conv):
@@ -136,6 +141,9 @@ def charger(fichier: pathlib.Path = FICHIER_CONFIG, perso: pathlib.Path | None =
         relance_apres_s=val(ap, "relance_apres_s", d.relance_apres_s, float),
         fin_apres_silence_s=val(ap, "fin_apres_silence_s", d.fin_apres_silence_s, float),
         duree_max_min=val(ap, "duree_max_min", d.duree_max_min, float),
+        bouton_actif=b.get("actif") is True or str(b.get("actif")).lower() in ("oui", "true", "1"),
+        bouton_broche=val(b, "broche", d.bouton_broche, int),
+        bouton_valeur_pose=1 if str(b.get("valeur_pose", 0)).strip() == "1" else 0,
         port=val(brut, "port", d.port, int),
     )
     r.dossier_docs.mkdir(parents=True, exist_ok=True)

@@ -67,7 +67,7 @@ for f in $FICHIERS_MODELE; do
 done
 ls -lh "$DOSSIER/modeles"
 
-etape 6 "Autoriser AlloIA à vider le cache mémoire au lancement"
+etape 6 "Autorisations : vider le cache mémoire, lire le bouton du socle"
 # La puce graphique de la Jetson ne récupère pas la mémoire occupée par le cache des fichiers :
 # on le vide juste avant de charger le modèle. Seule cette petite commande est autorisée sans
 # mot de passe.
@@ -77,9 +77,19 @@ echo "$USER ALL=(root) NOPASSWD: /usr/local/sbin/alloia-vider-cache" | sudo tee 
 sudo chmod 440 /etc/sudoers.d/alloia
 sudo visudo -cf /etc/sudoers.d/alloia
 
+# Droit de lire les broches de la carte (bouton du socle). Compte après un redémarrage.
+getent group gpio >/dev/null || sudo groupadd -f -r gpio
+sudo usermod -aG gpio "$USER"
+REGLE_GPIO=$(ls .venv/lib/python3*/site-packages/Jetson/GPIO/99-gpio.rules 2>/dev/null | head -1 || true)
+if [ -n "$REGLE_GPIO" ] && [ ! -f /etc/udev/rules.d/99-gpio.rules ]; then
+    sudo cp "$REGLE_GPIO" /etc/udev/rules.d/
+    sudo udevadm control --reload-rules && sudo udevadm trigger
+fi
+
 echo
 echo "=== Installation terminée ! ==="
 echo "1. Branchez la carte son USB, puis :  ./jetson/lancer.sh --lister-audio"
 echo "2. Indiquez le nom de la carte et votre jeton Hugging Face dans alloia.perso.yaml"
 echo "3. Testez le son :                    ./jetson/lancer.sh --test-audio"
 echo "4. Lancez AlloIA :                    ./jetson/lancer.sh"
+echo "(Bouton du socle : redémarrez la Jetson une fois, puis ./jetson/lancer.sh --test-bouton)"

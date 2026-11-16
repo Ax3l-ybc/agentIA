@@ -92,3 +92,15 @@ appel:
   fin_apres_silence_s: 60
   # Durée maximale d'un appel, en minutes.
   duree_max_min: 25
+
+# --- Le bouton du socle (facultatif) ---------------------------------
+# Un bouton sous le combiné, branché sur le connecteur 40 broches de la Jetson
+# (voir le README, « Le bouton du socle »). Testez-le avec : ./jetson/lancer.sh --test-bouton
+bouton:
+  # true : soulever le combiné lance l'appel, le reposer le termine.
+  # false : l'appel commence quand quelqu'un parle dans le combiné.
+  actif: false
+  # Numéro de la broche d'entrée sur le connecteur (numérotation de 1 à 40).
+  broche: 15
+  # Valeur lue quand le combiné est posé (0 ou 1) : le test du bouton vous l'indique.
+  valeur_pose: 0

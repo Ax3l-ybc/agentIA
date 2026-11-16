@@ -23,6 +23,8 @@ dans un fichier Markdown.
 - Une **Jetson Orin Nano** (8 Go) avec JetPack 6.
 - Une **carte son USB** avec un **micro** (combiné, prise jack) et un **haut-parleur**.
 - Une connexion internet pour l'installation et le premier lancement seulement.
+- Facultatif : un **bouton sous le combiné** (voir « Le bouton du socle »), pour que l'appel
+  commence quand on décroche et s'arrête quand on raccroche.
 
 ## Comment ça marche
 
@@ -128,6 +130,58 @@ aux lignes `entree:` et `sortie:`. Puis testez :
 ./jetson/lancer.sh --test-audio
 ```
 
+### Le bouton du socle (facultatif)
+
+Un micro-rupteur à languette, placé sous le combiné dans son socle : le poids du combiné
+appuie dessus. **Soulever le combiné lance l'appel, le reposer le termine** (la
+documentation est quand même écrite). Sans bouton, l'appel commence quand on parle.
+
+**Matériel** : le micro-rupteur, une résistance de **10 kΩ** (marron-noir-orange) et
+3 câbles Dupont femelles (ceux des kits Arduino).
+
+**Branchement**, carte éteinte, sur le connecteur 40 broches de la Jetson. Les broches se
+comptent à partir de la broche 1, marquée d'un petit triangle ou d'un carré : les numéros
+impairs (1, 3, 5…) sont sur une rangée, les pairs (2, 4, 6…) sur l'autre.
+
+```
+broche 17 (3,3 V) ── résistance 10 kΩ ──┬── broche 15
+                                        │
+                           micro-rupteur : patte C (commun)
+                           micro-rupteur : patte NO (normalement ouvert)
+                                        │
+broche 14 (masse) ──────────────────────┘
+```
+
+Autrement dit : la résistance relie les broches 17 et 15 ; le micro-rupteur relie les
+broches 15 et 14. Le micro-rupteur a souvent 3 pattes marquées **C**, **NO** et **NC** :
+prenez **C** et **NO**.
+
+> ⚠️ N'utilisez **jamais les broches 2 et 4** : elles sont en 5 V et peuvent abîmer la
+> carte. Tout ici est en 3,3 V.
+
+**Autoriser AlloIA à lire le bouton** (une seule fois) : relancez `./jetson/installer.sh`
+puis **redémarrez la Jetson**.
+
+**Tester** :
+
+```bash
+./jetson/lancer.sh --test-bouton
+```
+
+Posez et soulevez le combiné : le terminal doit afficher « combiné POSÉ » puis « combiné
+DÉCROCHÉ ». Si c'est à l'envers, mettez `valeur_pose: 1`. Si rien ne change, vérifiez les
+fils ; si tout est bon, lancez le même test avec `sudo .venv/bin/python -m alloia --test-bouton` :
+il dira si la broche doit être réglée sur la carte, et comment.
+
+**Activer** : ajoutez dans `alloia.perso.yaml` :
+
+```yaml
+bouton:
+  actif: true
+```
+
+Si le bouton est inutilisable au lancement, AlloIA le dit et revient au décroché à la voix.
+
 ## Lancer AlloIA
 
 ```bash
@@ -135,7 +189,8 @@ cd ~/AlloIA-code && ./jetson/lancer.sh
 ```
 
 AlloIA démarre llama.cpp (le cerveau est prêt en quelques dizaines de secondes). Quand le
-terminal affiche **« En attente d'un appel »**, décrochez et dites « Allô ? ».
+terminal affiche **« En attente d'un appel »**, décrochez et dites « Allô ? » (avec le bouton
+du socle : décrochez simplement, et raccrochez pour terminer).
 Pour les essais, la touche **Entrée** décroche et raccroche aussi. Pour arrêter : **Ctrl + C**
 (attendez « Documentation enregistrée » si un appel vient de se terminer).
 
@@ -200,6 +255,8 @@ alors du plus rapide au plus économe.
 | « Téléchargement de la voix refusé par Hugging Face » | Acceptez les conditions de Phonon et vérifiez le jeton dans `alloia.perso.yaml`. |
 | AlloIA coupe la personne trop tôt | Augmentez `pause_fin_de_phrase_s` (par exemple `1.8`). |
 | L'appel démarre tout seul (bruit de l'atelier) | Augmentez `parole_pour_decrocher_s` (par exemple `1.2`). |
+| Le bouton ne réagit pas | `./jetson/lancer.sh --test-bouton` (voir « Le bouton du socle »). |
+| « Pas le droit de lire les broches » | Relancez `./jetson/installer.sh`, puis redémarrez la Jetson. |
 | `git pull` refuse à cause d'`alloia.yaml` | Voir « Passer de la branche AlloIA à AlloIA-omni » : vos réglages vont dans `alloia.perso.yaml`. |
 
 Envoyez les messages du terminal pour qu'on corrige ensemble.
@@ -218,6 +275,7 @@ alloia/
   phrases.py           découpe du micro en phrases (Silero)
   voix.py              voix Phonon ou Ollama
   audio.py             le combiné : carte son USB (ou simulé pour les tests)
+  bouton.py            bouton du socle (broche de la Jetson) : décroché / raccroché
   doc.py               rédaction et enregistrement de la documentation
   reglages.py          lecture des réglages
 agent/                 briques partagées avec le directeur de mémoire (Phonon, Ollama…)

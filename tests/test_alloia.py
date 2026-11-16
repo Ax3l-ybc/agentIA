@@ -291,3 +291,94 @@ def test_serveur_llamacpp_demarre_directement_en_tres_econome(tmp_path):
         assert (tmp_path / "journal.log").read_text().count("out of memory") == 0
     finally:
         serveur.arreter()
+
+
+def test_reglages_bouton(tmp_path):
+    r = charger(perso=None)
+    assert r.bouton_actif is False and r.bouton_broche == 15 and r.bouton_valeur_pose == 0
+    perso = tmp_path / "perso.yaml"
+    perso.write_text("bouton:\n  actif: true\n  broche: 7\n  valeur_pose: 1\n", encoding="utf-8")
+    r = charger(perso=perso)
+    assert r.bouton_actif is True and r.bouton_broche == 7 and r.bouton_valeur_pose == 1
+
+
+def test_bouton_anti_rebond():
+    from alloia.bouton import BoutonSocle
+
+    async def scenario():
+        niveau = [0]  # 0 = posé
+        b = BoutonSocle(lambda: niveau[0], valeur_pose=0, anti_rebond_s=0.1, periode_s=0.005)
+        b.demarrer()
+        assert b.decroche is False and b.evt_pose.is_set()
+        # Rebonds très courts : ignorés.
+        for _ in range(5):
+            niveau[0] = 1
+            await asyncio.sleep(0.02)
+            niveau[0] = 0
+            await asyncio.sleep(0.02)
+        await asyncio.sleep(0.15)
+        assert b.decroche is False
+        niveau[0] = 1  # vrai décroché
+        await asyncio.wait_for(b.evt_decroche.wait(), 1)
+        assert b.decroche is True and not b.evt_pose.is_set()
+        niveau[0] = 0
+        await asyncio.wait_for(b.evt_pose.wait(), 1)
+        b.arreter()
+
+    asyncio.run(scenario())
+
+
+
+def test_appel_termine_en_reposant_le_combine(tmp_path):
+    from alloia import audio
+    from alloia.bouton import BoutonSocle, attendre_decroche_bouton
+
+    journal: list = []
+    port = port_libre()
+    faux = lancer_serveur(faux_llamacpp(journal), port)
+    adresse = f"http://127.0.0.1:{port}"
+    r = Reglages(dossier_docs=tmp_path / "docs", pause_s=0.8, fin_apres_silence_s=30)
+    cerveau = CerveauLlamaCpp(adresse)
+    consignes = (RACINE / "alloia_conduite.md").read_text(encoding="utf-8")
+
+    async def scenario():
+        niveau = [0]  # combiné posé
+        bouton = BoutonSocle(lambda: niveau[0], valeur_pose=0, anti_rebond_s=0.05)
+        bouton.demarrer()
+        # Le maker écoute l'accueil puis parle une fois.
+        combine = audio.CombineSimule([(("apres_agent", 0.0), ton(2.0))])
+        await combine.demarrer()
+        clavier = asyncio.Event()
+
+        async def maker():
+            await asyncio.sleep(0.3)
+            niveau[0] = 1  # il soulève le combiné
+            # … et le repose dès que sa phrase est partie au cerveau, pendant la réponse.
+            while sum(1 for c in journal if c.get("stream")) < 2:
+                await asyncio.sleep(0.02)
+            niveau[0] = 0
+
+        geste = asyncio.create_task(maker())
+        try:
+            cause = await asyncio.wait_for(attendre_decroche_bouton(bouton, clavier), 5)
+            appel = Appel(r, consignes, VoixSimulee(), detecteur_energie, cerveau)
+            t0 = asyncio.get_running_loop().time()
+            conv = await asyncio.wait_for(appel.derouler(combine, clavier, bouton.evt_pose), 60)
+            duree = asyncio.get_running_loop().time() - t0
+        finally:
+            geste.cancel()
+            bouton.arreter()
+            await combine.arreter()
+        return cause, conv, duree
+
+    try:
+        cause, conv, duree = asyncio.run(scenario())
+    finally:
+        faux.should_exit = True
+
+    assert cause == "bouton"
+    assert conv.raison_fin == "combiné raccroché"
+    assert duree < 25  # pas d'attente du silence prolongé (30 s)
+    texte = conv.transcription()
+    # La phrase dite juste avant de raccrocher est gardée pour la documentation.
+    assert "Maker : J'ai fabriqué une lampe" in texte

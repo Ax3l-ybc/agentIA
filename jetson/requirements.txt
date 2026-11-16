@@ -7,3 +7,5 @@ fastapi
 pyyaml
 numpy
 sounddevice
+# Lecture du bouton du socle (connecteur 40 broches)
+Jetson.GPIO

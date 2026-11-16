@@ -2,6 +2,7 @@
 # Lance AlloIA :                ./jetson/lancer.sh
 # Liste les cartes son :        ./jetson/lancer.sh --lister-audio
 # Teste micro et haut-parleur : ./jetson/lancer.sh --test-audio
+# Teste le bouton du socle :    ./jetson/lancer.sh --test-bouton
 set -euo pipefail
 cd "$(dirname "$0")/.."
 if [ ! -x .venv/bin/python ]; then
