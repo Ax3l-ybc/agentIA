@@ -105,6 +105,9 @@ sur le bouton **Rédiger la fiche de séance**. La fiche suit le modèle de votr
 `2026-11-05_fiche_role-des-sap.md`. Au début de la séance suivante, l'agent relit les fiches les
 plus récentes pour reprendre le fil.
 
+La rédaction prend une à deux minutes. Pendant ce temps, le directeur ne peut pas vous répondre :
+il vous le dit, et reprend la conversation dès que la fiche est enregistrée.
+
 ### Changer le comportement de l'agent : le « mode de conduite »
 
 Le fichier **`mode_de_conduite.md`** décrit comment l'agent se comporte : son rôle, son ton,
@@ -145,6 +148,9 @@ Pour quitter complètement, **fermez la fenêtre noire**.
 - **`cerveau > modele`** : la version de Gemma 4 E2B. `gemma-4-E2B-it-Q4_K_M.gguf` par défaut ;
   `gemma-4-E2B-it-Q3_K_M.gguf` est un peu plus rapide et un peu moins fin.
 - **`conversation > pause_fin_de_phrase_s`** : la pause qui marque la fin de votre phrase.
+- **`conversation > anticipation_s`** : le directeur prépare sa réponse dès ce court silence
+  (0,4 s), mais ne parle qu'une fois la pause ci-dessus atteinte ; si vous reprenez la parole,
+  il l'abandonne sans rien dire. `0` pour désactiver.
 - **`conversation > silence_avant_relance_s`** : le nombre de secondes de silence avant que l'agent vous relance.
 
 ---
@@ -179,10 +185,19 @@ Le directeur fonctionne comme le téléphone AlloIA sur la carte Jetson :
 - **la bouche** : [Phonon](https://huggingface.co/gradium/phonon-40m-fr) de Gradium (`phonon-40m-fr`) ;
 - **le détecteur de parole** : Silero, qui repère la fin de vos phrases.
 
-Pour que les réponses soient rapides sur un simple processeur, llama.cpp garde en mémoire
-vos consignes, vos notes et vos fiches d'un tour à l'autre (il ne les relit pas à chaque
-phrase). Il a deux « espaces » : l'un pour la conversation, l'autre pour retranscrire vos
-phrases (pour l'historique et la fiche) et rédiger la fiche, sans effacer le premier.
+Pour que les réponses soient rapides sur un simple processeur :
+
+- llama.cpp garde en mémoire vos consignes, vos notes et vos fiches d'un tour à l'autre (il ne
+  les relit pas à chaque phrase). Retranscrire vos phrases ou rédiger la fiche effacerait cette
+  mémoire : elle est sauvegardée juste avant (dans `DirecteurMemoire\memoire`) et restaurée
+  juste après ;
+- **envoi anticipé** : dès 0,4 s de silence, le directeur prépare sa réponse ; il ne la dit que
+  si vous vous êtes vraiment arrêté de parler ;
+- la voix commence dès la première virgule de la réponse, sans attendre la phrase entière.
+
+Pour une conversation plus fluide avec ce petit modèle, le programme lui rappelle à chaque tour
+ses dernières questions (pour qu'il ne les repose pas), et lui propose deux façons variées de
+commencer sa réponse (pour éviter les « Ah » à répétition).
 
 Organisation des fichiers :
 
@@ -195,6 +210,7 @@ agent/
   __main__.py         démarrage : cerveau, voix, lecture des consignes, page web
   cerveau.py          Gemma 4 dans llama.cpp (lancé par l'agent)
   seance.py           une séance à la voix avec la page web
+  fil.py              questions déjà posées, réactions variées
   application.py      les outils de l'agent (notes, fiches) et la fiche de séance
   consignes.py        le mode de conduite, l'adaptation à l'oral et la fiche
   coffre.py           la lecture des notes (lecture seule) et l'écriture des fiches

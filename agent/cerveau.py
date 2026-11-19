@@ -1,10 +1,12 @@
 """Le cerveau qui écoute : Gemma 4 E2B dans llama.cpp, sur l'ordinateur.
 
 Gemma 4 comprend directement l'audio : chaque phrase de l'étudiant lui est envoyée telle
-quelle, sans transcription préalable. llama.cpp est lancé par l'application avec deux
-« espaces » (slots) : l'espace 0 garde la conversation (consignes, notes et fiches déjà
-lues restent en mémoire d'un tour à l'autre), l'espace 1 sert aux retranscriptions et à
-la rédaction des fiches, sans effacer l'espace 0.
+quelle, sans transcription préalable. llama.cpp garde en mémoire ce qu'il a déjà lu
+(consignes, notes, fiches, historique) : à chaque phrase, il ne lit que la nouveauté.
+Une retranscription ou la rédaction d'une fiche effacerait cette mémoire : on la sauvegarde
+juste avant et on la restaure juste après (quelques centièmes de seconde).
+(Deux « espaces » séparés, -np 2, feraient la même chose, mais llama.cpp lit alors chaque
+jeton 2 à 3 fois plus lentement : mesuré avec Gemma 4 E2B.)
 """
 
 from __future__ import annotations
@@ -16,8 +18,10 @@ import logging
 import os
 import pathlib
 import shutil
+import socket
 import subprocess
 import sys
+import threading
 import time
 import urllib.error
 import urllib.request
@@ -28,8 +32,7 @@ import numpy as np
 
 log = logging.getLogger("agent.cerveau")
 
-ESPACE_CONVERSATION = 0
-ESPACE_ANNEXE = 1
+FICHIER_MEMOIRE = "conversation.bin"
 
 CONSIGNE_TRANSCRIPTION = (
     "Transcris mot pour mot ce message vocal, en français. "
@@ -58,6 +61,34 @@ class CerveauLlamaCpp:
     def __init__(self, adresse: str, temperature: float = 0.6):
         self.adresse = adresse.rstrip("/")
         self.temperature = temperature
+        # Une requête à la fois : une retranscription ne doit pas se glisser entre la
+        # sauvegarde et la restauration de la mémoire de la conversation.
+        self.verrou = threading.Lock()
+        self._deja_signale = False
+        self._en_cours = None
+
+    def _memoire(self, action: str) -> bool:
+        try:
+            with self._post(f"/slots/0?action={action}", {"filename": FICHIER_MEMOIRE}, delai=60) as r:
+                json.load(r)
+            return True
+        except (ErreurCerveau, ValueError) as exc:
+            if not self._deja_signale:  # pas grave : le tour suivant relira tout
+                log.warning("Mémoire de la conversation non %s : %s",
+                            "sauvegardée" if action == "save" else "restaurée", exc)
+                self._deja_signale = True
+            return False
+
+    def interrompre(self, arret: threading.Event) -> None:
+        """Coupe net la réponse en cours si c'est celle marquée par `arret` (réponse préparée
+        à l'avance puis abandonnée) : llama.cpp est aussitôt libre pour la vraie phrase."""
+        arret.set()
+        en_cours = self._en_cours
+        if en_cours is not None and en_cours[0] is arret:
+            try:
+                en_cours[1].fp.raw._sock.shutdown(socket.SHUT_RDWR)
+            except (AttributeError, OSError):
+                pass
 
     def _post(self, chemin: str, corps: dict, delai: float = 900):
         req = urllib.request.Request(
@@ -83,21 +114,41 @@ class CerveauLlamaCpp:
         }
 
     def discuter_en_flux(self, messages: list[dict], outils: list[dict] | None = None,
-                         espace: int = ESPACE_CONVERSATION, max_mots: int | None = None) -> Iterator[dict]:
+                         max_mots: int | None = None,
+                         arret: threading.Event | None = None) -> Iterator[dict]:
         """Réponse en flux : {"texte": …} au fil de l'eau, puis {"outil", "arguments", "id"}."""
         corps = {
             "messages": messages,
             "stream": True,
             "temperature": self.temperature,
             "cache_prompt": True,  # réutilise les consignes et l'historique déjà lus
-            "id_slot": espace,
         }
         if outils:
             corps["tools"] = outils
         if max_mots:
             corps["max_tokens"] = max_mots
         appels: dict[int, dict] = {}
+        with self.verrou:
+            if arret is not None and arret.is_set():
+                return  # abandonnée avant même d'avoir commencé
+            try:
+                yield from self._flux(corps, appels, max_mots, arret)
+            except (ErreurCerveau, OSError, ValueError):
+                if arret is not None and arret.is_set():
+                    return  # coupée exprès
+                raise
+            finally:
+                self._en_cours = None
+        for i, a in sorted(appels.items()):
+            try:
+                arguments = json.loads(a["args"]) if a["args"] else {}
+            except json.JSONDecodeError:
+                arguments = {}
+            yield {"outil": a["nom"], "arguments": arguments, "id": a["id"] or f"appel_{i}"}
+
+    def _flux(self, corps: dict, appels: dict, max_mots, arret) -> Iterator[dict]:
         with self._post("/v1/chat/completions", corps) as r:
+            self._en_cours = (arret, r)
             for ligne in r:
                 ligne = ligne.decode("utf-8", "replace").strip()
                 if not ligne.startswith("data:"):
@@ -108,6 +159,12 @@ class CerveauLlamaCpp:
                 morceau = json.loads(donnees)
                 if "error" in morceau:
                     raise ErreurCerveau(str(morceau["error"]))
+                temps = morceau.get("timings")
+                if temps and temps.get("prompt_ms") is not None and not max_mots:
+                    # Ce que llama.cpp a dû lire avant de répondre (le message vocal et ce qui a
+                    # changé depuis le tour précédent) : peu de jetons = sa mémoire a servi.
+                    log.info("  lecture : %d jetons lus en %.1f s", temps.get("prompt_n", 0),
+                             temps["prompt_ms"] / 1000)
                 for choix in morceau.get("choices") or []:
                     delta = choix.get("delta") or {}
                     if delta.get("content"):
@@ -118,20 +175,20 @@ class CerveauLlamaCpp:
                         a["nom"] += fonction.get("name") or ""
                         a["args"] += fonction.get("arguments") or ""
                         a["id"] = tc.get("id") or a["id"]
-        for i, a in sorted(appels.items()):
-            try:
-                arguments = json.loads(a["args"]) if a["args"] else {}
-            except json.JSONDecodeError:
-                arguments = {}
-            yield {"outil": a["nom"], "arguments": arguments, "id": a["id"] or f"appel_{i}"}
+                if arret is not None and arret.is_set():
+                    return
 
-    def rediger(self, messages: list[dict], espace: int = ESPACE_ANNEXE,
-                temperature: float = 0.3) -> str:
-        """Réponse complète (fiches, retranscriptions), dans l'espace annexe."""
-        corps = {"messages": messages, "stream": False, "temperature": temperature,
-                 "cache_prompt": True, "id_slot": espace}
-        with self._post("/v1/chat/completions", corps) as r:
-            reponse = json.load(r)
+    def rediger(self, messages: list[dict], temperature: float = 0.3) -> str:
+        """Réponse complète (fiches, retranscriptions), sans effacer la mémoire de la séance."""
+        corps = {"messages": messages, "stream": False, "temperature": temperature, "cache_prompt": False}
+        with self.verrou:
+            sauvee = self._memoire("save")
+            try:
+                with self._post("/v1/chat/completions", corps) as r:
+                    reponse = json.load(r)
+            finally:
+                if sauvee:
+                    self._memoire("restore")
         return (reponse["choices"][0]["message"].get("content") or "").strip()
 
     def transcrire(self, wav: bytes) -> str:
@@ -184,6 +241,7 @@ class ServeurLlamaCpp:
         self.r = r
         self.journal = journal
         self.processus: subprocess.Popen | None = None
+        self.dossier_memoire = pathlib.Path(os.path.expanduser("~")) / "DirecteurMemoire" / "memoire"
         self.cerveau = CerveauLlamaCpp(f"http://127.0.0.1:{r.llamacpp_port}", r.temperature)
 
     def commande(self, executable: pathlib.Path) -> list[str]:
@@ -192,8 +250,9 @@ class ServeurLlamaCpp:
             str(executable),
             "-m", str(r.llamacpp_modele),
             "--mmproj", str(r.llamacpp_mmproj),
-            "-c", str(2 * r.llamacpp_contexte),  # partagé entre les deux espaces
-            "-np", "2",                         # espace 0 : conversation ; 1 : annexe
+            "-c", str(r.llamacpp_contexte),
+            "-np", "1",                         # une seule conversation à la fois
+            "--slot-save-path", str(self.dossier_memoire),  # sauvegarde de la mémoire (voir plus haut)
             "-ngl", str(r.llamacpp_couches_gpu),
             "--reasoning", "off",               # pas de « réflexion » silencieuse
             "--jinja",                          # modèle de conversation de Gemma 4 (outils)
@@ -215,6 +274,7 @@ class ServeurLlamaCpp:
             if not chemin.is_file():
                 raise ErreurCerveau(f"Fichier introuvable pour {nom} : {chemin}\nRelancez installer.bat.")
         self.journal.parent.mkdir(parents=True, exist_ok=True)
+        self.dossier_memoire.mkdir(parents=True, exist_ok=True)
         options = {}
         if sys.platform == "win32":
             options["creationflags"] = subprocess.CREATE_NO_WINDOW
@@ -264,3 +324,4 @@ class ServeurLlamaCpp:
                 self.processus.wait(timeout=20)
             except subprocess.TimeoutExpired:
                 self.processus.kill()
+        (self.dossier_memoire / FICHIER_MEMOIRE).unlink(missing_ok=True)

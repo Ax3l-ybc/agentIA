@@ -41,6 +41,11 @@ ADAPTATION_ORALE = """
   séance (début, silence prolongé…).
 - Au tout début de la séance, reprends le fil comme le demande le mode de conduite,
   en deux ou trois phrases, puis pose une seule question.
+- Commence chaque réponse par une réaction très courte de quelques mots, suivie d'une virgule
+  ou d'un point, puis enchaîne. Varie ces réactions : ne commence jamais deux réponses de
+  suite de la même façon.
+- Une réponse incomplète ou un « je ne sais pas » est une réponse : note la zone floue et
+  avance. Ne repose pas une question à laquelle j'ai déjà répondu, même en partie.
 """
 
 DEBUT_SEANCE = "(La séance commence : l'étudiant vient d'ouvrir la conversation. Commence.)"

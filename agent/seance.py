@@ -30,6 +30,7 @@ import numpy as np
 from . import consignes
 from .application import OUTILS, Agent, Seance, envoyer
 from .cerveau import ErreurCerveau, wav_16k
+from .fil import Fil
 from .moteurs import float_vers_pcm16, pcm16_vers_float
 from .phrases import DecoupeurPhrases
 from .texte_voix import couper_phrases, nettoyer_pour_voix
@@ -52,6 +53,24 @@ class Conversation:
         self.transcriptions: set[asyncio.Task] = set()
         self.fin_voix = 0.0  # moment où la voix déjà envoyée aura fini d'être jouée
         self.n_phrase = 0
+        self.fil = Fil()  # questions déjà posées, réactions récentes (voir fil.py)
+
+    def _faire_de_la_place(self, secondes_audio: float) -> None:
+        """Si la mémoire de travail de llama.cpp va déborder (séance très longue), oublie les
+        plus vieux échanges (en gardant le début). On en oublie beaucoup d'un coup : le cerveau
+        doit alors relire l'historique, et c'est mieux que ça n'arrive qu'une fois."""
+        def estimation() -> float:  # environ 3 caractères par jeton, 25 jetons/s d'audio
+            texte = len(self.systeme) + sum(len(str(m.get("content"))) for m in self.historique)
+            return texte / 3 + 600 + secondes_audio * 25 + 400  # + outils, réponse
+
+        limite = self.agent.r.llamacpp_contexte
+        if estimation() < 0.85 * limite:
+            return
+        oublies = 0
+        while len(self.historique) > 4 and estimation() > 0.6 * limite:
+            del self.historique[2:4]  # le plus vieil échange après le début de séance
+            oublies += 1
+        log.info("  mémoire de travail presque pleine : %d anciens échanges oubliés", oublies)
 
     # ------------------------------------------------------------- voix
 
@@ -114,26 +133,37 @@ class Conversation:
         return self.n_phrase
 
     async def tour(self, audio: np.ndarray | None, indication: str = "",
-                   fin_phrase: float | None = None, ids: list[int] | None = None) -> str:
-        """Envoie une phrase de l'étudiant (ou une indication) et dit la réponse."""
+                   fin_phrase: float | None = None, ids: list[int] | None = None,
+                   feu_vert: asyncio.Event | None = None, arret: threading.Event | None = None) -> str:
+        """Envoie une phrase de l'étudiant (ou une indication) et dit la réponse.
+
+        Envoi anticipé : avec `feu_vert`, la réponse est préparée mais rien n'est dit, exécuté
+        ni gardé tant que le feu n'est pas vert (l'étudiant a vraiment fini sa phrase). S'il
+        reprend la parole, la tâche est annulée et `arret` interrompt le cerveau.
+        """
         await self.attendre_transcriptions(15)
         cerveau = self.agent.cerveau
         if audio is not None:
             wav = wav_16k(audio)
-            actuel = cerveau.message_vocal(wav, consignes.CONSIGNE_VOCALE)
+            actuel = cerveau.message_vocal(wav, self.fil.indication() + consignes.CONSIGNE_VOCALE)
         else:
             actuel = {"role": "user", "content": indication}
+        self._faire_de_la_place(len(audio) / 16000 if audio is not None else 0.0)
         messages = [{"role": "system", "content": self.systeme}, *self.historique, actuel]
         debut = time.monotonic()
-        await envoyer(self.ws, {"type": "etat", "etat": "reflexion"})
+        if feu_vert is None:
+            await envoyer(self.ws, {"type": "etat", "etat": "reflexion"})
 
         reponse_totale = ""
         premier_mot = None
         for _ in range(MAX_TOURS_OUTILS + 1):
-            texte, appels, erreur = await self._repondre(messages, debut, fin_phrase, premier_mot is None)
+            texte, appels, erreur = await self._repondre(messages, debut, fin_phrase, premier_mot is None,
+                                                         feu_vert, arret)
             if texte and premier_mot is None:
                 premier_mot = True
             reponse_totale += texte
+            if feu_vert is not None:
+                await feu_vert.wait()  # ni excuse ni outil avant que la phrase soit vraiment finie
             if erreur is not None:
                 log.error("Le cerveau n'a pas répondu : %s", erreur)
                 if self.agent.reparer is not None and not reponse_totale:
@@ -173,7 +203,9 @@ class Conversation:
                 messages.append({"role": "tool", "tool_call_id": a["id"],
                                  "content": json.dumps(resultat, ensure_ascii=False)[:12000]})
 
-        reponse_totale = reponse_totale.strip()
+        reponse_totale = self.fil.nettoyer_debut(reponse_totale.strip())
+        if self.fil.noter(reponse_totale, audio is not None):
+            log.info("  question déjà posée : le directeur passera à autre chose au tour suivant.")
         message_etudiant = {"role": "user", "content": indication or "(message vocal)"}
         self.historique.append(message_etudiant)
         self.historique.append({"role": "assistant", "content": reponse_totale or "…"})
@@ -186,14 +218,16 @@ class Conversation:
         self.seance.ajouter("directeur", reponse_totale)
         return reponse_totale
 
-    async def _repondre(self, messages, debut, fin_phrase, premier):
+    async def _repondre(self, messages, debut, fin_phrase, premier, feu_vert=None, arret=None):
         """Une réponse en flux ; dit chaque phrase dès qu'elle est complète."""
         boucle = asyncio.get_running_loop()
         file: asyncio.Queue = asyncio.Queue()
 
         def produire():
             try:
-                for m in self.agent.cerveau.discuter_en_flux(list(messages), OUTILS):
+                for m in self.agent.cerveau.discuter_en_flux(list(messages), OUTILS, arret=arret):
+                    if arret is not None and arret.is_set():
+                        break  # réponse préparée à l'avance puis abandonnée
                     boucle.call_soon_threadsafe(file.put_nowait, m)
             except Exception as exc:  # noqa: BLE001
                 boucle.call_soon_threadsafe(file.put_nowait, exc)
@@ -205,6 +239,8 @@ class Conversation:
         premiere_phrase = premier
         while True:
             m = await file.get()
+            if feu_vert is not None and not feu_vert.is_set():
+                await feu_vert.wait()  # rien n'est dit avant que la phrase soit vraiment finie
             phrases: list[str] = []
             if isinstance(m, Exception):
                 erreur = m
@@ -221,7 +257,15 @@ class Conversation:
                 texte += m["texte"]
                 tampon += m["texte"]
                 phrases, tampon = couper_phrases(tampon, premiere_phrase)
+                if premiere_phrase and not phrases:
+                    # Phonon parle dès le premier morceau : inutile d'attendre la fin de la
+                    # première phrase, on commence à la première virgule.
+                    i = tampon.find(",", 6)
+                    if i > 0:
+                        phrases, tampon = [tampon[: i + 1]], tampon[i + 1 :].lstrip()
             for p in phrases:
+                if premiere_phrase:
+                    p = self.fil.nettoyer_debut(p)
                 propre = nettoyer_pour_voix(p)
                 if not re.search(r"\w", propre):
                     continue
@@ -270,8 +314,13 @@ async def deroule_seance(agent: Agent, ws: fastapi.WebSocket) -> None:
     await ws.accept()
     conv = Conversation(agent, ws)
     r = agent.r
-    decoupeur = DecoupeurPhrases(agent.nouveau_detecteur(), pause_s=r.pause_s)
+    anticipation = r.anticipation_s if 0 < r.anticipation_s < r.pause_s else None
+    decoupeur = DecoupeurPhrases(agent.nouveau_detecteur(), pause_s=r.pause_s, anticipation_s=anticipation)
     phrases: asyncio.Queue = asyncio.Queue()
+    # Envoi anticipé : après un court silence, la phrase « probablement finie » est proposée.
+    decoupeur.sur_provisoire = lambda audio, silence: phrases.put_nowait(
+        ("provisoire", audio, time.monotonic() - silence, None))
+    decoupeur.sur_reprise = lambda: phrases.put_nowait(("reprise", None, 0.0, None))
     fin = asyncio.Event()
     accueil_fini = asyncio.Event()
     derniere_parole = [time.monotonic()]
@@ -294,7 +343,7 @@ async def deroule_seance(agent: Agent, ws: fastapi.WebSocket) -> None:
                     numero = conv.nouvel_id()
                     await envoyer(ws, {"type": "etudiant", "id": numero, "texte": "…"})
                     await envoyer(ws, {"type": "etat", "etat": "reflexion"})
-                    phrases.put_nowait((p, time.monotonic() - r.pause_s, numero))
+                    phrases.put_nowait(("phrase", p, time.monotonic() - r.pause_s, numero))
                 continue
             try:
                 donnees = json.loads(message.get("text") or "{}")
@@ -313,6 +362,16 @@ async def deroule_seance(agent: Agent, ws: fastapi.WebSocket) -> None:
                     await envoyer(ws, {"type": "fiche", "etat": "en_cours"})
         fin.set()
 
+    # Réponse préparée à l'avance : (tâche, feu vert, arrêt, audio, numéros des bulles)
+    anticipe: list = [None]
+
+    def abandonner_anticipe():
+        if anticipe[0] is not None:
+            tache, _, arret, _, _ = anticipe[0]
+            agent.cerveau.interrompre(arret)  # coupe net la réponse préparée pour rien
+            tache.cancel()
+            anticipe[0] = None
+
     reception = asyncio.create_task(recevoir())
     try:
         await conv.tour(None, consignes.DEBUT_SEANCE)
@@ -322,18 +381,44 @@ async def deroule_seance(agent: Agent, ws: fastapi.WebSocket) -> None:
         derniere_activite = time.monotonic()
         while not fin.is_set():
             try:
-                audio, fin_phrase, numero = await asyncio.wait_for(phrases.get(), timeout=0.25)
-                ids = [numero]
+                genre, audio, fin_phrase, numero = await asyncio.wait_for(phrases.get(), timeout=0.25)
             except asyncio.TimeoutError:
-                audio = None
+                genre, audio, numero = None, None, None
+            if genre == "provisoire":
+                # L'étudiant s'est peut-être arrêté : le directeur prépare déjà sa réponse.
+                abandonner_anticipe()
+                feu, arret, ids_anticipes = asyncio.Event(), threading.Event(), []
+                tache = asyncio.create_task(conv.tour(audio, fin_phrase=fin_phrase, ids=ids_anticipes,
+                                                      feu_vert=feu, arret=arret))
+                anticipe[0] = (tache, feu, arret, audio, ids_anticipes)
+                continue
+            if genre == "reprise":  # finalement non : il continue sa phrase
+                if anticipe[0] is not None:
+                    log.info("  (réponse préparée à l'avance abandonnée : vous continuez)")
+                abandonner_anticipe()
+                continue
+            if genre == "phrase" and anticipe[0] is not None:
+                tache, feu, arret, audio_anticipe, ids_anticipes = anticipe[0]
+                if len(audio_anticipe) == len(audio) and phrases.empty():
+                    anticipe[0] = None
+                    ids_anticipes.append(numero)
+                    feu.set()  # c'était bien la fin de sa phrase : la réponse est déjà prête
+                    relances = 0
+                    await tache
+                    await fin_de_parole(conv, ws, fin)
+                    derniere_activite = time.monotonic()
+                    continue
+                abandonner_anticipe()
+            ids = [numero] if numero is not None else []
             maintenant = time.monotonic()
             if conv.directeur_parle():
                 derniere_activite = maintenant
             if audio is not None:
                 while not phrases.empty():  # phrases arrivées pendant la réflexion : regroupées
-                    suite, fin_phrase, numero = phrases.get_nowait()
-                    audio = np.concatenate([audio, suite])
-                    ids.append(numero)
+                    g, suite, f, n = phrases.get_nowait()
+                    if g == "phrase":
+                        audio, fin_phrase = np.concatenate([audio, suite]), f
+                        ids.append(n)
                 relances = 0
                 await conv.tour(audio, fin_phrase=fin_phrase, ids=ids)
                 await fin_de_parole(conv, ws, fin)
@@ -350,6 +435,7 @@ async def deroule_seance(agent: Agent, ws: fastapi.WebSocket) -> None:
         log.exception("Erreur pendant la séance")
         await envoyer(ws, {"type": "erreur", "message": "Erreur pendant la séance (voir la fenêtre noire)."})
     finally:
+        abandonner_anticipe()
         fin.set()
         reception.cancel()
         await conv.attendre_transcriptions(30)

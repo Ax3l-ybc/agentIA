@@ -61,6 +61,10 @@ conversation:
   # Secondes de silence qui marquent la fin de votre phrase. Plus court = réponses plus
   # rapides, mais le directeur risque de vous couper pendant que vous réfléchissez.
   pause_fin_de_phrase_s: 1.2
+  # Envoi anticipé : le directeur prépare sa réponse dès ce silence (en secondes), mais ne
+  # parle qu'une fois la pause ci-dessus atteinte ; si vous reprenez, il l'abandonne.
+  # 0 = désactivé.
+  anticipation_s: 0.4
   # Secondes de silence avant que l'agent ne vous relance.
   silence_avant_relance_s: 20
   # Si toutes vos notes font moins que ce nombre de caractères,

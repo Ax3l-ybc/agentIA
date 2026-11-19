@@ -44,6 +44,8 @@ class Reglages:
     jeton_hf: str = ""
     # La conversation
     pause_s: float = 1.2
+    # Envoi anticipé : la réponse est préparée dès ce silence (0 = désactivé).
+    anticipation_s: float = 0.4
     silence_relance_s: float = 20.0
     seuil_notes_entieres: int = 20000
     port: int = 8000
@@ -135,6 +137,7 @@ def charger(fichier: pathlib.Path = FICHIER_CONFIG) -> Reglages:
         voix_vitesse=val(voix, "vitesse", 0.0, float),
         jeton_hf=str(brut.get("jeton_huggingface") or "").strip(),
         pause_s=val(conversation, "pause_fin_de_phrase_s", d.pause_s, float),
+        anticipation_s=val(conversation, "anticipation_s", d.anticipation_s, float),
         silence_relance_s=val(conversation, "silence_avant_relance_s", d.silence_relance_s, float),
         seuil_notes_entieres=val(conversation, "notes_en_entier_si_moins_de", d.seuil_notes_entieres, int),
         port=int(brut.get("port") or 8000),

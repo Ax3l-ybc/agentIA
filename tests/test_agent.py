@@ -252,6 +252,11 @@ def faux_llamacpp(journal: list):
                       {"content": "Quelle est ta problématique aujourd'hui ?"}]
         return StreamingResponse(sse(deltas), media_type="text/event-stream")
 
+    @app.post("/slots/{espace}")
+    async def memoire(espace: int, action: str, req: fastapi.Request):
+        journal.append({"memoire": action, "fichier": (await req.json())["filename"]})
+        return {"id_slot": espace}
+
     @app.get("/health")
     async def sante():
         return {"status": "ok"}
@@ -357,20 +362,25 @@ def test_seance_complete(coffre_test):
     assert any(m.get("type") == "etudiant" and m.get("texte") == TRANSCRIPTIONS[1] for m in recus)
 
     flux = [c for c in journal if c.get("stream")]
-    # Lecture à l'avance : consignes lues dans l'espace de conversation, un seul mot produit.
-    assert flux[0]["id_slot"] == 0 and flux[0]["max_tokens"] == 1
+    # Lecture à l'avance des consignes : un seul mot produit.
+    assert flux[0]["max_tokens"] == 1
     systeme = flux[0]["messages"][0]["content"]
     assert "MODE DE CONDUITE" in systeme and "tiers-lieux" in systeme
     # La séance réutilise exactement les mêmes consignes (pas de relecture).
     assert all(c["messages"][0]["content"] == systeme for c in flux)
-    assert all(c["id_slot"] == 0 and c["cache_prompt"] for c in flux)
+    assert all(c["cache_prompt"] for c in flux)
     vocal = next(c for c in flux if isinstance(c["messages"][-1]["content"], list))
     partie = next(p for p in vocal["messages"][-1]["content"] if p["type"] == "input_audio")
     assert __import__("base64").b64decode(partie["input_audio"]["data"])[:4] == b"RIFF"
     assert {o["function"]["name"] for o in vocal["tools"]} >= {"lire_note", "rediger_fiche_recap"}
-    # Retranscriptions et fiche dans l'espace annexe (la conversation reste en mémoire).
-    annexes = [c for c in journal if not c.get("stream")]
-    assert annexes and all(c["id_slot"] == 1 for c in annexes)
+    # Retranscriptions et fiche : la mémoire de la conversation est sauvegardée juste avant
+    # et restaurée juste après (sinon llama.cpp relirait tout au tour suivant).
+    for i, c in enumerate(journal):
+        if "messages" in c and not c.get("stream"):
+            assert journal[i - 1].get("memoire") == "save" and journal[i + 1].get("memoire") == "restore"
+    # Le rappel des questions et le choix de la réaction accompagnent le message vocal.
+    consigne = next(p for p in vocal["messages"][-1]["content"] if p["type"] == "text")["text"]
+    assert "Pour commencer ta réponse, choisis" in consigne
     # Les notes n'ont pas bougé d'un octet.
     assert empreinte(notes) == avant
 
@@ -414,3 +424,40 @@ def test_mode_de_conduite_du_projet_est_charge():
 
     texte = consignes.lire_mode(r.RACINE / "mode_de_conduite.md")
     assert "services d'appui à la pédagogie" in texte and "fiche-seance" in texte
+
+
+def test_fil_questions_et_reactions():
+    import random
+
+    from agent.fil import PASSER_A_AUTRE_CHOSE, Fil, proposer_reactions, retirer_tic
+
+    fil = Fil()
+    assert "dernières questions" not in fil.indication()
+    assert not fil.noter("Intéressant. Quelle est ta problématique exactement ?", True)
+    assert "« Quelle est ta problématique exactement ? »" in fil.indication()
+    # Il repose la même question : au tour suivant, on lui demande de passer à autre chose.
+    assert fil.noter("Bien. Et ta problématique, quelle est-elle exactement ?", True)
+    assert fil.indication().startswith(PASSER_A_AUTRE_CHOSE)
+    fil.noter("Je note. Quels terrains vas-tu étudier ?", True)
+    assert not fil.indication().startswith(PASSER_A_AUTRE_CHOSE)
+    # Réactions variées, et un tic qui vient d'être dit est retiré.
+    neutre, appreciative = proposer_reactions(["bien", "intéressant", "excellent"], random.Random(2))
+    assert appreciative.split()[0].lower() not in ("intéressant", "excellent")
+    assert retirer_tic("Intéressant, et ensuite ?", ["intéressant"]) == "Et ensuite ?"
+
+
+def test_decoupeur_envoi_anticipe():
+    from agent.phrases import DecoupeurPhrases
+
+    evenements = []
+    d = DecoupeurPhrases(detecteur_energie(), pause_s=1.2, anticipation_s=0.4)
+    d.sur_provisoire = lambda audio, silence: evenements.append(("provisoire", len(audio)))
+    d.sur_reprise = lambda: evenements.append(("reprise",))
+    # Une phrase, une courte pause (0,6 s), la suite, puis une vraie pause.
+    signal = np.concatenate([ton(1.0), np.zeros(9600, np.float32), ton(1.0), np.zeros(32000, np.float32)])
+    phrases = []
+    for i in range(0, len(signal), 1600):
+        phrases += d.ajouter(signal[i : i + 1600])
+    assert [e[0] for e in evenements] == ["provisoire", "reprise", "provisoire"]
+    # La phrase définitive est identique à la dernière provisoire : la réponse préparée sert.
+    assert len(phrases) == 1 and len(phrases[0]) == evenements[-1][1]

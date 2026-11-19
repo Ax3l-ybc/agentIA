@@ -120,7 +120,7 @@ class Agent:
         debut = time.monotonic()
         messages = [{"role": "system", "content": self.consignes_seance()},
                     {"role": "user", "content": consignes.DEBUT_SEANCE}]
-        for _ in self.cerveau.discuter_en_flux(messages, OUTILS, espace=0, max_mots=1):
+        for _ in self.cerveau.discuter_en_flux(messages, OUTILS, max_mots=1):
             pass
         log.info("Consignes, notes et fiches lues par le cerveau en %.0f s.", time.monotonic() - debut)
 
@@ -143,7 +143,9 @@ class Agent:
             if not seance.etudiant_a_parle():
                 return {"erreur": "La séance vient de commencer, rien à résumer."}
             if lancer_fiche(str(args.get("consignes", ""))):
-                return {"statut": "Rédaction lancée. La fiche sera enregistrée dans le dossier des fiches."}
+                return {"statut": "Rédaction lancée. La fiche sera enregistrée dans le dossier des fiches. "
+                        "Préviens l'étudiant, en une phrase, que la rédaction prend une à deux "
+                        "minutes et que tu ne pourras pas lui répondre pendant ce temps."}
             return {"statut": "Une fiche est déjà en cours de rédaction."}
         return {"erreur": f"Outil inconnu : {nom}"}
 
