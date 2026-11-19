@@ -106,7 +106,7 @@ def faux_llamacpp(journal: list):
             premier = corps["messages"][0]["content"]
             if isinstance(premier, list) and "Transcris" in premier[0]["text"]:
                 texte = transcriptions.pop(0) if transcriptions else ""
-                journal.append({"transcription": "llama.cpp", "espace": corps.get("id_slot")})
+                journal.append({"transcription": "llama.cpp"})
                 return {"choices": [{"message": {"role": "assistant", "content": texte}}]}
             return {"choices": [{"message": {"role": "assistant", "content": DOC}}]}
         if corps.get("max_tokens") == 1:  # lecture anticipée des consignes
@@ -124,6 +124,11 @@ def faux_llamacpp(journal: list):
         else:
             deltas = [{"content": "Génial ! Quel réglage de laser as-tu utilisé ?"}]
         return StreamingResponse(sse(deltas), media_type="text/event-stream")
+
+    @app.post("/slots/{espace}")
+    async def memoire(espace: int, action: str, req: fastapi.Request):
+        journal.append({"memoire": action, "fichier": (await req.json())["filename"]})
+        return {"id_slot": espace, "filename": "conversation.bin"}
 
     @app.get("/health")
     async def sante():
@@ -228,9 +233,10 @@ def test_appel_complet(tmp_path, moteur):
         partie = next(p for p in vocal["content"] if p["type"] == "input_audio")
         assert base64.b64decode(partie["input_audio"]["data"])[:4] == b"RIFF"
         assert flux[1]["cache_prompt"] is True
-        # La conversation garde l'espace 0 ; les retranscriptions passent dans l'espace 1.
-        assert all(c["id_slot"] == 0 for c in flux)
-        assert {"transcription": "llama.cpp", "espace": 1} in journal
+        # Chaque retranscription est encadrée par la sauvegarde et la restauration de la
+        # mémoire de la conversation (sinon llama.cpp relirait tout l'historique au tour suivant).
+        i = journal.index({"transcription": "llama.cpp"})
+        assert journal[i - 2]["memoire"] == "save" and journal[i + 1]["memoire"] == "restore"
     else:
         assert base64.b64decode(vocal["images"][0])[:4] == b"RIFF" and flux[1]["think"] is False
         assert {"transcription": "gemma4:e2b", "langue": "fr"} in journal
@@ -415,6 +421,6 @@ def test_lecture_anticipee_identique_au_debut_de_l_appel(tmp_path):
     finally:
         faux.should_exit = True
     anticipee, premier_tour = journal[0], journal[1]
-    assert anticipee["max_tokens"] == 1 and anticipee["id_slot"] == 0
+    assert anticipee["max_tokens"] == 1
     assert anticipee["messages"] == premier_tour["messages"]
     assert anticipee["tools"] == premier_tour["tools"]

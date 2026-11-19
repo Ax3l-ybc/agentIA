@@ -15,6 +15,7 @@ import logging
 import os
 import pathlib
 import subprocess
+import threading
 import time
 import urllib.error
 import urllib.request
@@ -26,11 +27,21 @@ log = logging.getLogger("alloia.cerveau")
 
 ErreurCerveau = ollama_audio.ErreurOllama
 
-# llama.cpp tourne avec deux « espaces » (slots) : l'espace 0 garde l'appel en cours
-# (consignes, outils et historique déjà lus restent en mémoire d'un tour à l'autre) ;
-# l'espace 1 sert aux retranscriptions et à la documentation, sans effacer l'espace 0.
-ESPACE_CONVERSATION = 0
-ESPACE_ANNEXE = 1
+# llama.cpp garde en mémoire ce qu'il a déjà lu (consignes, outils, historique de l'appel) :
+# au tour suivant, il ne lit que la nouveauté. Mais une retranscription ou la rédaction de la
+# documentation effacerait cette mémoire : on la sauvegarde juste avant (quelques centièmes de
+# seconde, en mémoire vive) et on la restaure juste après.
+# (Deux « espaces » séparés, -np 2, feraient la même chose, mais llama.cpp lit alors chaque
+# jeton environ 3 fois plus lentement : mesuré avec Gemma 4 E2B.)
+FICHIER_MEMOIRE = "conversation.bin"
+
+
+def dossier_memoire() -> pathlib.Path:
+    """Où llama.cpp sauvegarde sa mémoire : en mémoire vive (/dev/shm) si possible."""
+    shm = pathlib.Path("/dev/shm")
+    if shm.is_dir() and os.access(shm, os.W_OK):
+        return shm / f"alloia-{os.getuid()}"
+    return pathlib.Path(os.path.expanduser("~/AlloIA/memoire"))
 
 CONSIGNE_TRANSCRIPTION = (
     "Transcris mot pour mot ce message vocal, en français. "
@@ -70,6 +81,33 @@ class CerveauLlamaCpp:
     def __init__(self, adresse: str, temperature: float = 0.4):
         self.adresse = adresse.rstrip("/")
         self.temperature = temperature
+        # Une requête à la fois : une retranscription ne doit pas se glisser entre la
+        # sauvegarde et la restauration de la mémoire de la conversation.
+        self.verrou = threading.Lock()
+        self._deja_signale = False
+
+    def _memoire(self, action: str) -> bool:
+        try:
+            with self._post(f"/slots/0?action={action}", {"filename": FICHIER_MEMOIRE}, delai=60) as r:
+                json.load(r)
+            return True
+        except (ErreurCerveau, ValueError) as exc:
+            if not self._deja_signale:  # pas grave : le tour suivant relira tout l'historique
+                log.warning("Mémoire de la conversation non %s : %s",
+                            "sauvegardée" if action == "save" else "restaurée", exc)
+                self._deja_signale = True
+            return False
+
+    def _a_part(self, corps: dict, delai: float) -> dict:
+        """Requête hors conversation (retranscription, doc) qui n'efface pas la conversation."""
+        with self.verrou:
+            sauvee = self._memoire("save")
+            try:
+                with self._post("/v1/chat/completions", corps, delai=delai) as r:
+                    return json.load(r)
+            finally:
+                if sauvee:
+                    self._memoire("restore")
 
     # ------------------------------------------------------------ requêtes
 
@@ -102,14 +140,13 @@ class CerveauLlamaCpp:
             "stream": True,
             "temperature": self.temperature,
             "cache_prompt": True,  # réutilise les consignes et l'historique déjà calculés
-            "id_slot": ESPACE_CONVERSATION,
         }
         if outils:
             corps["tools"] = outils
         if max_mots:
             corps["max_tokens"] = max_mots
         appels: dict[int, dict] = {}
-        with self._post("/v1/chat/completions", corps) as r:
+        with self.verrou, self._post("/v1/chat/completions", corps) as r:
             for ligne in r:
                 ligne = ligne.decode("utf-8", "replace").strip()
                 if not ligne.startswith("data:"):
@@ -148,10 +185,8 @@ class CerveauLlamaCpp:
         return texte.strip().strip('"«»').strip()
 
     def rediger(self, messages: list[dict], temperature: float = 0.3) -> str:
-        corps = {"messages": messages, "stream": False, "temperature": temperature,
-                 "cache_prompt": False, "id_slot": ESPACE_ANNEXE}
-        with self._post("/v1/chat/completions", corps, delai=900) as r:
-            reponse = json.load(r)
+        corps = {"messages": messages, "stream": False, "temperature": temperature, "cache_prompt": False}
+        reponse = self._a_part(corps, delai=900)
         return (reponse["choices"][0]["message"].get("content") or "").strip()
 
     def pret(self) -> bool:
@@ -229,6 +264,7 @@ class ServeurLlamaCpp:
         self.journal = journal
         self.profil = PROFIL_DE_DEPART.get(getattr(r, "llamacpp_mode", "auto"), len(PROFILS_MEMOIRE) - 1)
         self.processus: subprocess.Popen | None = None
+        self.dossier_memoire = dossier_memoire()
         self.cerveau = CerveauLlamaCpp(f"http://127.0.0.1:{r.llamacpp_port}", r.ollama_temperature)
 
     # ------------------------------------------------------------------
@@ -240,7 +276,7 @@ class ServeurLlamaCpp:
             str(r.llamacpp_serveur),
             "-m", str(r.llamacpp_modele),
             "--mmproj", str(r.llamacpp_mmproj),
-            "-c", str(2 * contexte),   # partagé entre les deux espaces (voir ESPACE_…)
+            "-c", str(contexte),
             "-ngl", "99",              # tout le modèle sur la puce graphique
             "--reasoning", "off",      # pas de « réflexion » silencieuse avant de répondre
             "--jinja",                 # modèle de conversation de Gemma 4 (outils)
@@ -248,7 +284,8 @@ class ServeurLlamaCpp:
             "--cache-ram", "0",        # pas de cache de conversations en mémoire vive (8 Go sinon)
             "--host", "127.0.0.1",
             "--port", str(r.llamacpp_port),
-            "-np", "2",                # espace 0 : l'appel ; espace 1 : retranscriptions, doc
+            "-np", "1",                # une seule conversation à la fois
+            "--slot-save-path", str(self.dossier_memoire),  # sauvegarde de la mémoire (voir plus haut)
             *profil["args"],
         ]
 
@@ -280,6 +317,7 @@ class ServeurLlamaCpp:
                 log.warning("C'est peu : le cerveau a besoin d'environ 4 Go. Programmes qui occupent "
                             "le plus de mémoire :\n%s", gros_consommateurs())
         self.journal.parent.mkdir(parents=True, exist_ok=True)
+        self.dossier_memoire.mkdir(parents=True, exist_ok=True)
         env = dict(os.environ)
         env["LD_LIBRARY_PATH"] = f"{r.llamacpp_serveur.parent}:{env.get('LD_LIBRARY_PATH', '')}"
         dernier = ""
@@ -288,8 +326,8 @@ class ServeurLlamaCpp:
             vider_cache_memoire()
             depuis = self.journal.stat().st_size if self.journal.exists() else 0
             commande = self._commande(profil)
-            log.info("Démarrage de llama.cpp (mode %s, contexte %d par espace ; journal : %s)…",
-                     profil["nom"], int(commande[commande.index("-c") + 1]) // 2, self.journal)
+            log.info("Démarrage de llama.cpp (mode %s, contexte %s ; journal : %s)…",
+                     profil["nom"], commande[commande.index("-c") + 1], self.journal)
             self.processus = subprocess.Popen(
                 commande, stdout=open(self.journal, "ab"), stderr=subprocess.STDOUT, env=env
             )
@@ -354,6 +392,7 @@ class ServeurLlamaCpp:
                 self.processus.wait(timeout=20)
             except subprocess.TimeoutExpired:
                 self.processus.kill()
+        (self.dossier_memoire / FICHIER_MEMOIRE).unlink(missing_ok=True)
 
 
 def lancer_serveur_llamacpp(r, journal: pathlib.Path) -> ServeurLlamaCpp:

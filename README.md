@@ -41,10 +41,11 @@ Pour chaque phrase du maker :
 3. la réponse arrive mot à mot, et chaque phrase est dite par Phonon dès qu'elle est complète ;
 4. pendant qu'AlloIA parle, Gemma 4 retranscrit la phrase du maker, pour l'historique et la doc.
 
-Pour répondre vite, llama.cpp garde deux « espaces » de mémoire : l'un garde l'appel en cours
-(consignes et historique déjà lus ne sont pas relus à chaque phrase), l'autre sert aux
-retranscriptions et à la documentation. Et pendant l'attente d'un appel, Gemma 4 lit déjà
-les consignes : au décroché, elle n'a plus que la salutation à écrire.
+Pour répondre vite, llama.cpp garde en mémoire ce qu'il a déjà lu (consignes, historique) :
+à chaque phrase, il ne lit que la nouveauté. Les retranscriptions effaceraient cette mémoire :
+AlloIA la sauvegarde juste avant (en mémoire vive, quelques centièmes de seconde) et la
+restaure juste après. Et pendant l'attente d'un appel, Gemma 4 lit déjà les consignes : au
+décroché, elle n'a plus que la salutation à écrire.
 
 Le micro est coupé pendant qu'AlloIA parle, pour qu'elle ne s'entende pas elle-même.
 
@@ -253,8 +254,8 @@ alors du plus rapide au plus économe.
 Pour chaque phrase, le terminal affiche où passe le temps :
 
 ```
-  lecture : 180 jetons lus en 1.2 s       ← écoute du message vocal (+ ce qui a changé)
-  réflexion : premier mot après 1.6 s     ← la même chose + le début de la réponse
+  lecture : 250 jetons lus en 1.8 s       ← le message vocal et la nouveauté de l'historique
+  réflexion : premier mot après 1.9 s     ← la même chose + le début de la réponse
   voix : premier son après 0.4 s de synthèse (total : 3.4 s)
 ```
 
