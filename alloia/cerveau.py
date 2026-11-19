@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import base64
 import json
+import socket
 import logging
 import os
 import pathlib
@@ -133,8 +134,19 @@ class CerveauLlamaCpp:
             ],
         }
 
+    def interrompre(self, arret: threading.Event) -> None:
+        """Coupe net la réponse en cours si c'est celle marquée par `arret` (envoi anticipé
+        abandonné) : llama.cpp est aussitôt libre pour la vraie phrase."""
+        arret.set()
+        en_cours = getattr(self, "_en_cours", None)
+        if en_cours is not None and en_cours[0] is arret:
+            try:
+                en_cours[1].fp.raw._sock.shutdown(socket.SHUT_RDWR)
+            except (AttributeError, OSError):
+                pass
+
     def discuter_en_flux(self, messages: list[dict], outils: list[dict] | None = None,
-                         max_mots: int | None = None) -> Iterator[dict]:
+                         max_mots: int | None = None, arret: threading.Event | None = None) -> Iterator[dict]:
         corps = {
             "messages": messages,
             "stream": True,
@@ -146,7 +158,29 @@ class CerveauLlamaCpp:
         if max_mots:
             corps["max_tokens"] = max_mots
         appels: dict[int, dict] = {}
-        with self.verrou, self._post("/v1/chat/completions", corps) as r:
+        with self.verrou:
+            if arret is not None and arret.is_set():
+                return  # abandonnée avant même d'avoir commencé
+            try:
+                yield from self._flux(corps, appels, max_mots, arret)
+            except ErreurCerveau:
+                if arret is not None and arret.is_set():
+                    return  # coupée exprès
+                raise
+            except (OSError, ValueError):
+                if arret is not None and arret.is_set():
+                    return
+                raise
+        for a in appels.values():
+            try:
+                arguments = json.loads(a["args"]) if a["args"] else {}
+            except json.JSONDecodeError:
+                arguments = {}
+            yield {"outil": a["nom"], "arguments": arguments}
+
+    def _flux(self, corps: dict, appels: dict, max_mots, arret) -> Iterator[dict]:
+        with self._post("/v1/chat/completions", corps) as r:
+            self._en_cours = (arret, r)
             for ligne in r:
                 ligne = ligne.decode("utf-8", "replace").strip()
                 if not ligne.startswith("data:"):
@@ -172,12 +206,9 @@ class CerveauLlamaCpp:
                         fonction = tc.get("function") or {}
                         a["nom"] += fonction.get("name") or ""
                         a["args"] += fonction.get("arguments") or ""
-        for a in appels.values():
-            try:
-                arguments = json.loads(a["args"]) if a["args"] else {}
-            except json.JSONDecodeError:
-                arguments = {}
-            yield {"outil": a["nom"], "arguments": arguments}
+                if arret is not None and arret.is_set():
+                    return
+        self._en_cours = None
 
     def transcrire(self, wav: bytes) -> str:
         """Retranscrit un message vocal dans l'espace annexe (l'appel en cours reste en mémoire)."""

@@ -38,6 +38,8 @@ class Reglages:
     ollama_temperature: float = 0.4
     ollama_reflexion: bool = False
     pause_s: float = 1.3
+    # Envoi anticipé : la réponse est préparée dès ce silence (0 = désactivé).
+    anticipation_s: float = 0.4
     voix_moteur: str = "phonon"  # "phonon" ou "ollama"
     voix_ollama_modele: str = "lfm3-omni"
     voix_ollama_nom: str = "female-french"
@@ -126,6 +128,7 @@ def charger(fichier: pathlib.Path = FICHIER_CONFIG, perso: pathlib.Path | None =
         ollama_temperature=val(o, "temperature", d.ollama_temperature, float),
         ollama_reflexion=bool(o.get("reflexion", False)),
         pause_s=val(e, "pause_fin_de_phrase_s", d.pause_s, float),
+        anticipation_s=val(e, "anticipation_s", d.anticipation_s, float),
         voix_moteur=str(v.get("moteur") or d.voix_moteur).lower(),
         voix_ollama_modele=val(v, "modele_ollama", d.voix_ollama_modele, str),
         voix_ollama_nom=val(v, "voix_ollama", d.voix_ollama_nom, str),

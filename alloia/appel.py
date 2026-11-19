@@ -49,6 +49,8 @@ ADAPTATION_ORALE = """
 - Les messages du maker t'arrivent en audio. Réponds à ce qu'il dit : ne répète pas et ne
   transcris pas ses paroles.
 - Les messages entre parenthèses ne viennent pas du maker : ce sont des indications sur l'appel.
+- Commence chaque réponse par une réaction très courte de quelques mots (comme on le fait au
+  téléphone), suivie d'une virgule ou d'un point, puis enchaîne.
 """
 
 CONSIGNE_VOCALE = "(Message vocal du maker. Réponds-lui directement, sans répéter ses paroles.)"
@@ -194,8 +196,14 @@ class Appel:
     # --------------------------------------------------------------- un tour
 
     async def tour(self, combine: Combine, conv: Conversation, audio: np.ndarray | None,
-                   indication: str = "", fin_phrase: float | None = None) -> str:
-        """Envoie une phrase du maker (ou une indication) et dit la réponse."""
+                   indication: str = "", fin_phrase: float | None = None,
+                   feu_vert: asyncio.Event | None = None, arret: threading.Event | None = None) -> str:
+        """Envoie une phrase du maker (ou une indication) et dit la réponse.
+
+        Envoi anticipé : avec `feu_vert`, la réponse est préparée mais rien n'est dit ni gardé
+        tant que le feu n'est pas vert (la personne a vraiment fini sa phrase). Si elle reprend
+        la parole, la tâche est annulée et `arret` interrompt le cerveau.
+        """
         await self._attendre_transcriptions(10)
         if audio is not None:
             wav = ollama_audio.wav_16k(audio)
@@ -208,7 +216,6 @@ class Appel:
                             f" {consigne}")
             if self.repetition:  # filet de sécurité : ne pas insister sur une question
                 consigne = PASSER_A_AUTRE_CHOSE + " " + consigne
-                self.repetition = False
             actuel = self.cerveau.message_vocal(wav, consigne)
         else:
             actuel = {"role": "user", "content": indication}
@@ -220,7 +227,10 @@ class Appel:
 
         def produire():
             try:
-                for m in self.cerveau.discuter_en_flux(messages, OUTILS):
+                options = {"arret": arret} if arret is not None and hasattr(self.cerveau, "interrompre") else {}
+                for m in self.cerveau.discuter_en_flux(messages, OUTILS, **options):
+                    if arret is not None and arret.is_set():
+                        break  # envoi anticipé abandonné : on libère le cerveau
                     boucle.call_soon_threadsafe(file.put_nowait, m)
             except Exception as exc:  # noqa: BLE001
                 boucle.call_soon_threadsafe(file.put_nowait, exc)
@@ -233,6 +243,8 @@ class Appel:
         premier_mot = premier_son = None
         while True:
             m = await file.get()
+            if feu_vert is not None and not feu_vert.is_set():
+                await feu_vert.wait()  # rien n'est dit avant que la phrase soit vraiment finie
             if isinstance(m, Exception):
                 log.error("Le cerveau n'a pas répondu : %s", m)
                 if self.reparer is not None and not reponse:
@@ -261,6 +273,12 @@ class Appel:
                 reponse += m["texte"]
                 tampon += m["texte"]
                 phrases, tampon = couper_phrases(tampon, premiere)
+                if premiere and not phrases:
+                    # Phonon parle dès le premier morceau : inutile d'attendre la fin de la
+                    # première phrase, on commence à la première virgule.
+                    i = tampon.find(",", 6)  # « Je vois, » ou « Intéressant, » mais pas « Ah, »
+                    if i > 0:
+                        phrases, tampon = [tampon[: i + 1]], tampon[i + 1 :].lstrip()
             for p in phrases:
                 if self.raccroche is not None and self.raccroche.is_set():
                     continue  # combiné reposé : on finit la réponse en silence (pour la doc)
@@ -277,6 +295,8 @@ class Appel:
                 break
 
         reponse = _EMOJIS.sub("", reponse).strip()
+        if audio is not None:
+            self.repetition = False  # le rappel « passe à autre chose » a été transmis
         # Historique en texte : la phrase du maker sera remplacée par sa transcription.
         message_maker = {"role": "user", "content": indication or "(message vocal)"}
         self.historique.append(message_maker)
@@ -321,7 +341,8 @@ class Appel:
         r = self.r
         self.raccroche = raccroche
         conv = Conversation(debut=datetime.datetime.now())
-        decoupeur = DecoupeurPhrases(self.detecteur, pause_s=r.pause_s)
+        anticipation = r.anticipation_s if 0 < r.anticipation_s < r.pause_s else None
+        decoupeur = DecoupeurPhrases(self.detecteur, pause_s=r.pause_s, anticipation_s=anticipation)
         phrases: asyncio.Queue = asyncio.Queue()
         fin = asyncio.Event()
         debut = time.monotonic()
@@ -342,7 +363,24 @@ class Appel:
                 for p in decoupeur.ajouter(trame):
                     derniere_parole[0] = time.monotonic()
                     # La personne a fini de parler `pause_s` avant que la phrase soit livrée.
-                    phrases.put_nowait((p, time.monotonic() - r.pause_s))
+                    phrases.put_nowait(("phrase", p, time.monotonic() - r.pause_s))
+
+        def provisoire(audio, silence_s):
+            phrases.put_nowait(("provisoire", audio, time.monotonic() - silence_s))
+
+        decoupeur.sur_provisoire = provisoire
+        decoupeur.sur_reprise = lambda: phrases.put_nowait(("reprise", None, 0.0))
+        # Envoi anticipé en cours : (tâche, feu vert, arrêt, audio)
+        anticipe: list = [None]
+
+        def abandonner_anticipe():
+            if anticipe[0] is not None:
+                tache, _, arret, _ = anticipe[0]
+                if hasattr(self.cerveau, "interrompre"):
+                    self.cerveau.interrompre(arret)  # coupe net la réponse préparée pour rien
+                arret.set()
+                tache.cancel()
+                anticipe[0] = None
 
         async def surveiller_socle():
             await raccroche.wait()
@@ -361,20 +399,49 @@ class Appel:
             derniere_activite = time.monotonic()
             while True:
                 try:
-                    audio, fin_phrase = await asyncio.wait_for(phrases.get(), timeout=0.25)
+                    genre, audio, fin_phrase = await asyncio.wait_for(phrases.get(), timeout=0.25)
                 except asyncio.TimeoutError:
-                    audio = None
+                    genre, audio = None, None
+                if genre == "provisoire":
+                    # La personne s'est peut-être arrêtée : on prépare déjà la réponse.
+                    abandonner_anticipe()
+                    feu, arret = asyncio.Event(), threading.Event()
+                    tache = asyncio.create_task(
+                        self.tour(combine, conv, audio, fin_phrase=fin_phrase, feu_vert=feu, arret=arret))
+                    anticipe[0] = (tache, feu, arret, audio)
+                    continue
+                if genre == "reprise":  # finalement non : elle continue sa phrase
+                    if anticipe[0] is not None:
+                        log.info("  (réponse anticipée abandonnée : le maker continue)")
+                    abandonner_anticipe()
+                    continue
+                if genre == "phrase" and anticipe[0] is not None:
+                    tache, feu, _, audio_anticipe = anticipe[0]
+                    anticipe[0] = None
+                    if len(audio_anticipe) == len(audio) and phrases.empty():
+                        feu.set()  # c'était bien la fin de la phrase : la réponse est déjà prête
+                        relances = 0
+                        await tache
+                        derniere_activite = time.monotonic()
+                        continue
+                    tache.cancel()
                 maintenant = time.monotonic()
                 if raccroche is not None and raccroche.is_set():
                     conv.raison_fin = "combiné raccroché"
+                    if anticipe[0] is not None:  # sa dernière phrase est gardée pour la doc
+                        tache, feu, _, _ = anticipe[0]
+                        anticipe[0] = None
+                        feu.set()
+                        await tache
                     break
                 if combine.agent_parle():
                     derniere_activite = maintenant
                 if audio is not None:
                     # Plusieurs phrases arrivées pendant la réflexion : on les regroupe.
                     while not phrases.empty():
-                        suite, fin_phrase = phrases.get_nowait()
-                        audio = np.concatenate([audio, suite])
+                        g, suite, f = phrases.get_nowait()
+                        if g == "phrase":
+                            audio, fin_phrase = np.concatenate([audio, suite]), f
                     relances = 0
                     await self.tour(combine, conv, audio, fin_phrase=fin_phrase)
                     derniere_activite = time.monotonic()
@@ -405,6 +472,7 @@ class Appel:
                     await self.tour(combine, conv, None, RELANCE)
                     derniere_activite = time.monotonic()
         finally:
+            abandonner_anticipe()
             fin.set()
             ecoute.cancel()
             if socle is not None:
