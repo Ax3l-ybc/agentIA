@@ -424,3 +424,58 @@ def test_lecture_anticipee_identique_au_debut_de_l_appel(tmp_path):
     assert anticipee["max_tokens"] == 1
     assert anticipee["messages"] == premier_tour["messages"]
     assert anticipee["tools"] == premier_tour["tools"]
+
+
+def test_detection_des_questions_reposees():
+    from alloia.appel import deja_posee, derniere_question
+
+    assert derniere_question("Super ! Quelle épaisseur de contreplaqué as-tu utilisée ?") \
+        == "Quelle épaisseur de contreplaqué as-tu utilisée ?"
+    assert derniere_question("Merci, à bientôt !") == ""
+    poses = ["Quelle épaisseur de contreplaqué as-tu utilisée ?", "Combien de temps ça t'a pris ?"]
+    assert deja_posee("Et le contreplaqué, il faisait quelle épaisseur ?", poses)
+    assert not deja_posee("Quels réglages de laser as-tu choisis ?", poses)
+
+
+def test_question_reposee_fait_passer_a_autre_chose(tmp_path):
+    from alloia.appel import CONSIGNE_VOCALE, PASSER_A_AUTRE_CHOSE
+
+    class CerveauQuiInsiste:
+        def __init__(self):
+            self.consignes = []
+
+        def message_vocal(self, wav, consigne):
+            self.consignes.append(consigne)
+            return {"role": "user", "content": consigne}
+
+        def discuter_en_flux(self, messages, outils=None):
+            yield {"texte": "D'accord. Quelle épaisseur de contreplaqué as-tu utilisée ?"}
+
+        def transcrire(self, wav):
+            return "je ne sais plus"
+
+    from alloia import audio
+
+    cerveau = CerveauQuiInsiste()
+    r = Reglages(dossier_docs=tmp_path)
+    appel = Appel(r, "Consignes.", VoixSimulee(), detecteur_energie, cerveau)
+
+    async def scenario():
+        combine = audio.CombineSimule([])
+        await combine.demarrer()
+        conv = Conversation(debut=datetime.datetime.now())
+        try:
+            for _ in range(3):
+                await appel.tour(combine, conv, ton(0.5, 16000))
+        finally:
+            await combine.arreter()
+
+    asyncio.run(scenario())
+    # 1er tour : rien de spécial ; 2e tour : la question n'a pas encore été répétée ;
+    # 3e tour : AlloIA a reposé la même question au 2e tour -> on lui dit de passer à autre chose.
+    assert cerveau.consignes[0] == CONSIGNE_VOCALE
+    # Dès le 2e tour, les questions déjà posées sont rappelées au cerveau.
+    assert "déjà posées" in cerveau.consignes[1] and "épaisseur de contreplaqué" in cerveau.consignes[1]
+    assert not cerveau.consignes[1].startswith(PASSER_A_AUTRE_CHOSE)
+    assert cerveau.consignes[2].startswith(PASSER_A_AUTRE_CHOSE)
+    assert all(c.endswith(CONSIGNE_VOCALE) for c in cerveau.consignes)

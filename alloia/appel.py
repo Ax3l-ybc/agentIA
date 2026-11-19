@@ -53,8 +53,38 @@ ADAPTATION_ORALE = """
 
 CONSIGNE_VOCALE = "(Message vocal du maker. Réponds-lui directement, sans répéter ses paroles.)"
 DECROCHE = "(Le maker vient de décrocher le combiné. Commence l'appel.)"
-RELANCE = "(Le maker ne dit plus rien depuis un moment. Relance-le gentiment, en une phrase.)"
+RELANCE = ("(Le maker ne dit plus rien depuis un moment. Relance-le gentiment, en une phrase, "
+           "sans reposer ta dernière question : propose plutôt de parler d'autre chose.)")
+# Ajouté au message vocal suivant quand AlloIA vient de reposer une question déjà posée.
+PASSER_A_AUTRE_CHOSE = ("(Tu as déjà posé cette question. Accepte sa réponse telle quelle, même "
+                        "vague, et passe à un autre sujet sans revenir dessus.)")
+
+_MOTS_VIDES = set("""alors aussi avec avez avoir avais cette comme dans donc elle elles est était
+être fait faire leur mais même moins nous peux peut plus pour quel quelle quelles quels quoi sans
+sont sous suis tout toute tous très vous votre veux""".split())
 EXCUSE = "Désolé, j'ai eu un petit souci. Peux-tu répéter ce que tu viens de dire ?"
+
+def mots_cles(question: str) -> set[str]:
+    return {m for m in re.findall(r"\w+", question.lower()) if len(m) > 3 and m not in _MOTS_VIDES}
+
+
+def derniere_question(texte: str) -> str:
+    """La dernière phrase interrogative d'une réponse d'AlloIA (ou "")."""
+    phrases = re.findall(r"[^.!?…]*\?", texte)
+    return phrases[-1].strip() if phrases else ""
+
+
+def deja_posee(question: str, precedentes: list[str], seuil: float = 0.5) -> bool:
+    """Vrai si `question` ressemble à une question déjà posée (mêmes mots importants)."""
+    nouveaux = mots_cles(question)
+    if len(nouveaux) < 2:
+        return False
+    for ancienne in precedentes:
+        anciens = mots_cles(ancienne)
+        if anciens and len(nouveaux & anciens) / len(nouveaux | anciens) >= seuil:
+            return True
+    return False
+
 
 _AU_REVOIR = re.compile(r"\b(au revoir|bonne journée|bonne soirée|à plus tard|à bientôt|ciao)\b", re.I)
 _EMOJIS = re.compile("[\U0001F000-\U0001FAFF☀-➿]")
@@ -157,6 +187,8 @@ class Appel:
         self.historique: list[dict] = []  # messages texte (sans audio) des tours précédents
         self.transcriptions: set[asyncio.Task] = set()
         self.raccrocher = False
+        self.questions: list[str] = []  # questions déjà posées par AlloIA
+        self.repetition = False  # AlloIA vient de reposer une question déjà posée
         self.raccroche: asyncio.Event | None = None  # combiné reposé sur le socle (bouton)
 
     # --------------------------------------------------------------- un tour
@@ -167,7 +199,17 @@ class Appel:
         await self._attendre_transcriptions(10)
         if audio is not None:
             wav = ollama_audio.wav_16k(audio)
-            actuel = self.cerveau.message_vocal(wav, CONSIGNE_VOCALE)
+            consigne = CONSIGNE_VOCALE
+            # Rappel des dernières questions posées : un petit modèle oublie vite ce qu'il a déjà
+            # demandé et a tendance à insister. (Ce rappel n'est pas gardé dans l'historique : il
+            # ne gêne pas la mémoire de llama.cpp.)
+            if self.questions:
+                consigne = (f"(Questions déjà posées, à ne pas reposer : {' / '.join(self.questions[-4:])})"
+                            f" {consigne}")
+            if self.repetition:  # filet de sécurité : ne pas insister sur une question
+                consigne = PASSER_A_AUTRE_CHOSE + " " + consigne
+                self.repetition = False
+            actuel = self.cerveau.message_vocal(wav, consigne)
         else:
             actuel = {"role": "user", "content": indication}
         messages = [{"role": "system", "content": self.systeme}, *self.historique, actuel]
@@ -243,6 +285,12 @@ class Appel:
             echange = conv.ajouter("maker", "")
             self._lancer_transcription(wav, message_maker, echange)
         conv.ajouter("alloia", reponse)
+        question = derniere_question(reponse)
+        if question:
+            if deja_posee(question, self.questions):
+                log.info("  question déjà posée : AlloIA passera à autre chose au tour suivant.")
+                self.repetition = True
+            self.questions.append(question)
         return reponse
 
     def _lancer_transcription(self, wav: bytes, message: dict, echange: Echange) -> None:

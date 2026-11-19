@@ -213,7 +213,16 @@ Pendant l'appel, le terminal affiche les temps de réponse :
 ## Personnaliser
 
 - **`alloia_conduite.md`** : la personnalité d'AlloIA et ce qu'elle doit faire raconter.
-  Relu à chaque appel : une modification s'applique tout de suite.
+  Relu à chaque appel : une modification s'applique tout de suite. Conseils d'écriture, car
+  Gemma 4 E2B est un petit modèle :
+  - présentez les sujets comme des **pistes**, pas comme une liste à cocher (sinon il insiste
+    pour tout « remplir ») ;
+  - dites-lui qu'une information manquante n'est pas grave (elle ira dans « À compléter ») ;
+  - **évitez les phrases d'exemple entre guillemets** : il les recopie mot pour mot, à
+    chaque tour.
+
+  En plus des consignes, le programme rappelle à AlloIA ses dernières questions à chaque tour,
+  et si elle en repose une quand même, il lui demande de passer à autre chose.
 - **`alloia_modele_doc.md`** : le modèle de la documentation produite.
 - **`alloia.yaml`** (ou mieux, `alloia.perso.yaml`) : les réglages.
   - `cerveau > llamacpp > modele` : la version compressée de Gemma 4 E2B. Q3_K_M (défaut) est
