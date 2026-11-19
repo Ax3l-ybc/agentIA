@@ -473,7 +473,8 @@ def test_question_reposee_fait_passer_a_autre_chose(tmp_path):
     asyncio.run(scenario())
     # 1er tour : rien de spécial ; 2e tour : la question n'a pas encore été répétée ;
     # 3e tour : AlloIA a reposé la même question au 2e tour -> on lui dit de passer à autre chose.
-    assert cerveau.consignes[0] == CONSIGNE_VOCALE
+    assert cerveau.consignes[0].endswith(CONSIGNE_VOCALE) and "Ne la repose pas" not in cerveau.consignes[0]
+    assert "Pour commencer ta réponse, choisis" in cerveau.consignes[0]
     # Dès le 2e tour, la dernière question est rappelée au cerveau, avec la piste suivante.
     assert "Ne la repose pas" in cerveau.consignes[1] and "épaisseur de contreplaqué" in cerveau.consignes[1]
     # Deux questions sur les matériaux : le sujet est clos, AlloIA doit passer à autre chose.
@@ -514,3 +515,28 @@ def test_fil_conducteur_et_au_revoir_d_alloia(tmp_path):
     asyncio.run(scenario())
     # Gemma n'appelle pas toujours l'outil « raccrocher » : un au revoir d'AlloIA suffit.
     assert appel.raccrocher
+
+
+def test_panel_de_reactions_et_tics():
+    import random
+
+    from alloia.appel import proposer_reactions, retirer_tic
+
+    neutre, enthousiaste = proposer_reactions(["super", "génial", "chouette"], random.Random(1))
+    assert enthousiaste.split()[0].lower() not in ("super", "génial", "chouette")
+    # « Ah » vient d'être dit : on le retire ; sinon on le garde.
+    assert retirer_tic("Ah, la découpe laser, c'est précis.", ["ah"]) == "La découpe laser, c'est précis."
+    assert retirer_tic("Ah, la découpe laser.", ["je"]) == "Ah, la découpe laser."
+
+
+def test_memoire_de_travail_pleine_on_oublie_les_vieux_echanges(tmp_path):
+    appel = Appel(Reglages(dossier_docs=tmp_path, llamacpp_contexte=2048), "Consignes. " * 100,
+                  VoixSimulee(), detecteur_energie, None)
+    appel.historique = [{"role": "user", "content": "(décroché)"}, {"role": "assistant", "content": "Allô !"}]
+    for i in range(40):
+        appel.historique += [{"role": "user", "content": f"Réponse {i} " + "blabla " * 20},
+                             {"role": "assistant", "content": f"Question {i} ?"}]
+    appel._faire_de_la_place(5.0)
+    assert appel.historique[1]["content"] == "Allô !"  # la salutation est gardée
+    assert "Réponse 39" in appel.historique[-2]["content"]  # les derniers échanges aussi
+    assert len(appel.historique) < 40

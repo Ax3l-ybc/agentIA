@@ -25,8 +25,9 @@ cerveau:
     # '~/AlloIA/modeles/gemma-4-E2B-it-Q4_K_M.gguf' (à télécharger, voir le README).
     modele: '~/AlloIA/modeles/gemma-4-E2B-it-Q3_K_M.gguf'
     mmproj: '~/AlloIA/modeles/mmproj-F16.gguf'
-    # Mémoire de travail : 4096 suffit pour un appel ; plus = plus de mémoire utilisée.
-    taille_contexte: 4096
+    # Mémoire de travail (en jetons) : 8192 suffit pour un appel de 25 minutes, et ne coûte
+    # qu'environ 50 Mo. Si elle se remplit, les plus vieux échanges sont oubliés.
+    taille_contexte: 8192
     port: 8090
     # Réglage mémoire : 'tres_econome' (module audio sur le processeur : démarre du premier
     # coup sur la Jetson Orin Nano), 'econome', 'normal', ou 'auto' (essaie du plus rapide

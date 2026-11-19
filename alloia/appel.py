@@ -14,6 +14,7 @@ import asyncio
 import dataclasses
 import datetime
 import logging
+import random
 import re
 import threading
 import time
@@ -49,10 +50,13 @@ ADAPTATION_ORALE = """
 - Les messages du maker t'arrivent en audio. Réponds à ce qu'il dit : ne répète pas et ne
   transcris pas ses paroles.
 - Les messages entre parenthèses ne viennent pas du maker : ce sont des indications sur l'appel.
+- Termine toujours ta réponse par une question ou une invitation à continuer : au téléphone,
+  un silence met mal à l'aise. Seule exception : quand tu dis au revoir.
 - Si le maker dit au revoir ou qu'il a fini : ne pose plus aucune question. Remercie-le en une
   phrase, dis que la documentation va être rédigée, et termine par « Au revoir ! ».
 - Commence chaque réponse par une réaction très courte de quelques mots (comme on le fait au
-  téléphone), suivie d'une virgule ou d'un point, puis enchaîne.
+  téléphone), suivie d'une virgule ou d'un point, puis enchaîne. Varie ces réactions : ne
+  commence jamais deux réponses de suite de la même façon.
 """
 
 CONSIGNE_VOCALE = "(Message vocal du maker. Réponds-lui directement, sans répéter ses paroles.)"
@@ -88,6 +92,38 @@ PISTES = [
     ("ses conseils pour quelqu'un qui voudrait le refaire", ("conseil", "refaire", "améliorer",
                                                              "changer", "recommand")),
 ]
+
+
+# Panel de réactions pour commencer une réponse : à chaque tour, le programme en propose une
+# neutre et une enthousiaste, parmi celles qu'AlloIA n'a pas utilisées récemment.
+REACTIONS_NEUTRES = ["D'accord", "Je vois", "Ok", "Je note", "Entendu", "Je comprends", "Ah oui",
+                     "Très bien", "Ça marche", "Oui", "Ah d'accord", "Hmm"]
+REACTIONS_ENTHOUSIASTES = ["Super", "Génial", "Chouette", "Pas mal", "Bien vu", "Top", "Excellent",
+                           "Trop bien", "Intéressant", "Sympa", "Waouh", "Bravo"]
+# Petits mots qu'on retire s'ils reviennent en début de réponse juste après avoir été dits.
+_TIC = re.compile(r"^\s*(ah|oh|waouh|wow|hmm|super|génial|intéressant)\s*[,!.…]+\s*", re.I)
+
+
+def mot_d_ouverture(texte: str) -> str:
+    m = re.match(r"\W*([\w'’]+)", texte)
+    return m.group(1).lower() if m else ""
+
+
+def proposer_reactions(recentes: list[str], hasard: random.Random = random) -> tuple[str, str]:
+    """Une réaction neutre et une enthousiaste dont le premier mot n'a pas servi récemment."""
+    def choisir(panel):
+        libres = [x for x in panel if mot_d_ouverture(x) not in recentes]
+        return hasard.choice(libres or panel)
+    return choisir(REACTIONS_NEUTRES), choisir(REACTIONS_ENTHOUSIASTES)
+
+
+def retirer_tic(texte: str, recentes: list[str]) -> str:
+    """Retire un « Ah, » (ou « Super ! »…) en début de réponse s'il vient d'être dit."""
+    m = _TIC.match(texte)
+    if not m or m.group(1).lower() not in recentes:
+        return texte
+    reste = texte[m.end():]
+    return reste[:1].upper() + reste[1:] if reste else texte
 
 
 def pistes_de(question: str) -> list[int]:
@@ -220,6 +256,7 @@ class Appel:
         self.raccrocher = False
         self.questions: list[str] = []  # questions déjà posées par AlloIA
         self.questions_par_piste = [0] * len(PISTES)
+        self.ouvertures: list[str] = []  # premier mot de chaque réponse d'AlloIA
         self.repetition = False  # AlloIA vient de reposer une question déjà posée
         self.raccroche: asyncio.Event | None = None  # combiné reposé sur le socle (bouton)
 
@@ -241,12 +278,15 @@ class Appel:
             # Rappel des dernières questions posées : un petit modèle oublie vite ce qu'il a déjà
             # demandé et a tendance à insister. (Ce rappel n'est pas gardé dans l'historique : il
             # ne gêne pas la mémoire de llama.cpp.)
-            consigne = self.fil_conducteur() + consigne
+            neutre, enthousiaste = proposer_reactions(self.ouvertures[-5:])
+            consigne = (self.fil_conducteur() + f"(Pour commencer ta réponse, choisis « {neutre}, » ou "
+                        f"« {enthousiaste}, » selon ce qu'il vient de dire.) " + consigne)
             if self.repetition:  # filet de sécurité : ne pas insister sur une question
                 consigne = PASSER_A_AUTRE_CHOSE + " " + consigne
             actuel = self.cerveau.message_vocal(wav, consigne)
         else:
             actuel = {"role": "user", "content": indication}
+        self._faire_de_la_place(len(audio) / 16000 if audio is not None else 0.0)
         messages = [{"role": "system", "content": self.systeme}, *self.historique, actuel]
 
         boucle = asyncio.get_running_loop()
@@ -310,6 +350,8 @@ class Appel:
             for p in phrases:
                 if self.raccroche is not None and self.raccroche.is_set():
                     continue  # combiné reposé : on finit la réponse en silence (pour la doc)
+                if premiere:
+                    p = retirer_tic(p, self.ouvertures[-3:])
                 texte = _EMOJIS.sub("", nettoyer_pour_voix(p))
                 if not re.search(r"\w", texte):
                     continue
@@ -322,7 +364,9 @@ class Appel:
             if m is None:
                 break
 
-        reponse = _EMOJIS.sub("", reponse).strip()
+        reponse = retirer_tic(_EMOJIS.sub("", reponse).strip(), self.ouvertures[-3:])
+        if reponse:
+            self.ouvertures.append(mot_d_ouverture(reponse))
         if audio is not None:
             self.repetition = False  # le rappel « passe à autre chose » a été transmis
         # Historique en texte : la phrase du maker sera remplacée par sa transcription.
@@ -344,6 +388,23 @@ class Appel:
                 self.repetition = True
             self.questions.append(question)
         return reponse
+
+    def _faire_de_la_place(self, secondes_audio: float) -> None:
+        """Si la mémoire de travail de llama.cpp va déborder (appel très long), oublie les plus
+        vieux échanges (en gardant la salutation). On en oublie beaucoup d'un coup : le cerveau
+        doit alors relire l'historique, et c'est mieux que ça n'arrive qu'une fois."""
+        def estimation() -> float:  # environ 3 caractères par jeton en français, 25 jetons/s d'audio
+            texte = len(self.systeme) + sum(len(str(m.get("content"))) for m in self.historique)
+            return texte / 3 + 400 + secondes_audio * 25 + 300  # + outils, audio, réponse
+
+        limite = getattr(self.r, "llamacpp_contexte", 8192)
+        if estimation() < 0.85 * limite:
+            return
+        oublies = 0
+        while len(self.historique) > 4 and estimation() > 0.6 * limite:
+            del self.historique[2:4]  # le plus vieil échange après la salutation
+            oublies += 1
+        log.info("  mémoire de travail presque pleine : %d anciens échanges oubliés", oublies)
 
     def fil_conducteur(self) -> str:
         """Indication donnée au cerveau avec chaque phrase du maker : les sujets clos (sur

@@ -27,7 +27,7 @@ class Reglages:
     llamacpp_serveur: pathlib.Path = DOSSIER_ALLOIA / "llama.cpp" / "build" / "bin" / "llama-server"
     llamacpp_modele: pathlib.Path = DOSSIER_ALLOIA / "modeles" / "gemma-4-E2B-it-Q3_K_M.gguf"
     llamacpp_mmproj: pathlib.Path = DOSSIER_ALLOIA / "modeles" / "mmproj-F16.gguf"
-    llamacpp_contexte: int = 4096
+    llamacpp_contexte: int = 8192
     llamacpp_port: int = 8090
     # Réglage mémoire de départ : "tres_econome" (défaut), "econome", "normal" ou "auto"
     # ("auto" = du plus rapide au plus économe, jusqu'à ce que ça tienne en mémoire).

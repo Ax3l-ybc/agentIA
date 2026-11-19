@@ -231,8 +231,10 @@ class CerveauLlamaCpp:
 # Réglages essayés dans l'ordre si la puce graphique manque de mémoire au démarrage.
 PROFILS_MEMOIRE = [
     {"nom": "normal", "contexte": None, "args": ["-b", "512", "-ub", "256"]},
-    {"nom": "économe", "contexte": 2048, "args": ["-b", "256", "-ub", "128"]},
-    {"nom": "très économe (module audio hors de la puce graphique)", "contexte": 2048,
+    # (La taille de la mémoire de travail coûte peu avec Gemma 4 : 6 Mo par tranche de 1 000
+    # jetons. La limiter à 2 048 faisait échouer les appels après une dizaine d'échanges.)
+    {"nom": "économe", "contexte": None, "args": ["-b", "256", "-ub", "128"]},
+    {"nom": "très économe (module audio hors de la puce graphique)", "contexte": None,
      "args": ["-b", "256", "-ub", "128", "--no-mmproj-offload"]},
 ]
 # Où commencer selon le réglage « mode » (alloia.yaml) ; « auto » essaie du plus rapide au
