@@ -41,6 +41,11 @@ Pour chaque phrase du maker :
 3. la réponse arrive mot à mot, et chaque phrase est dite par Phonon dès qu'elle est complète ;
 4. pendant qu'AlloIA parle, Gemma 4 retranscrit la phrase du maker, pour l'historique et la doc.
 
+Pour répondre vite, llama.cpp garde deux « espaces » de mémoire : l'un garde l'appel en cours
+(consignes et historique déjà lus ne sont pas relus à chaque phrase), l'autre sert aux
+retranscriptions et à la documentation. Et pendant l'attente d'un appel, Gemma 4 lit déjà
+les consignes : au décroché, elle n'a plus que la salutation à écrire.
+
 Le micro est coupé pendant qu'AlloIA parle, pour qu'elle ne s'entende pas elle-même.
 
 Déroulement d'un appel :
@@ -243,6 +248,29 @@ ratés à chaque lancement. Si vous avez désactivé le bureau, vous pouvez essa
 mettant `mode: 'auto'` dans la partie `cerveau > llamacpp` de `alloia.yaml` : AlloIA essaiera
 alors du plus rapide au plus économe.
 
+## Accélérer les réponses
+
+Pour chaque phrase, le terminal affiche où passe le temps :
+
+```
+  lecture : 180 jetons lus en 1.2 s       ← écoute du message vocal (+ ce qui a changé)
+  réflexion : premier mot après 1.6 s     ← la même chose + le début de la réponse
+  voix : premier son après 0.4 s de synthèse (total : 3.4 s)
+```
+
+Le « total » se compte depuis la fin de la phrase du maker. Ce qu'on peut régler, sans
+changer de modèle :
+
+1. **La pause de fin de phrase** (`ecoute > pause_fin_de_phrase_s`, 1,3 s par défaut) :
+   AlloIA attend ce silence avant de répondre. 1,0 fait gagner 0,3 s par réponse, au risque
+   de couper quelqu'un qui cherche ses mots.
+2. **Le module audio sur la puce graphique** : en mode `tres_econome`, l'écoute du message
+   vocal se fait sur le processeur, plus lent. Sans bureau graphique (voir « Mémoire de la
+   carte »), essayez `mode: 'econome'` dans la partie `cerveau > llamacpp` de
+   `alloia.perso.yaml` : si la ligne `lecture` diminue nettement, gardez-le.
+3. **Des réponses courtes** : la première phrase est dite dès qu'elle est écrite. Des
+   consignes qui demandent des phrases brèves (`alloia_conduite.md`) font parler AlloIA plus tôt.
+
 ## En cas de problème
 
 | Ce que vous voyez | Que faire |
@@ -250,7 +278,7 @@ alors du plus rapide au plus économe.
 | « llama.cpp s'est arrêté au démarrage » | Lisez la fin du journal affichée ; souvent la mémoire : fermez les autres programmes, ou passez sans bureau graphique. |
 | « Fichier introuvable pour le modèle » | Relancez `./jetson/installer.sh` (le téléchargement reprend où il s'était arrêté). |
 | « Ollama tourne encore » | `sudo systemctl stop ollama` (l'installation le désactive normalement). |
-| Réponses lentes | `free -h` pendant un appel : si `Swap` est utilisé, voir « Mémoire de la carte ». |
+| Réponses lentes | Regardez les lignes `lecture`, `réflexion` et `voix` du terminal (voir « Accélérer les réponses »). `free -h` pendant un appel : si `Swap` est utilisé, voir « Mémoire de la carte ». |
 | « Aucun micro ou haut-parleur utilisable » | Vérifiez la carte son avec `arecord -l` et `aplay -l`, puis son nom dans `alloia.perso.yaml`. |
 | « Téléchargement de la voix refusé par Hugging Face » | Acceptez les conditions de Phonon et vérifiez le jeton dans `alloia.perso.yaml`. |
 | AlloIA coupe la personne trop tôt | Augmentez `pause_fin_de_phrase_s` (par exemple `1.8`). |

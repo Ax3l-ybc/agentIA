@@ -26,6 +26,17 @@ log = logging.getLogger("alloia.cerveau")
 
 ErreurCerveau = ollama_audio.ErreurOllama
 
+# llama.cpp tourne avec deux « espaces » (slots) : l'espace 0 garde l'appel en cours
+# (consignes, outils et historique déjà lus restent en mémoire d'un tour à l'autre) ;
+# l'espace 1 sert aux retranscriptions et à la documentation, sans effacer l'espace 0.
+ESPACE_CONVERSATION = 0
+ESPACE_ANNEXE = 1
+
+CONSIGNE_TRANSCRIPTION = (
+    "Transcris mot pour mot ce message vocal, en français. "
+    "Réponds uniquement par la transcription, sans rien ajouter."
+)
+
 
 class CerveauOllama:
     nom = "Ollama"
@@ -84,15 +95,19 @@ class CerveauLlamaCpp:
             ],
         }
 
-    def discuter_en_flux(self, messages: list[dict], outils: list[dict] | None = None) -> Iterator[dict]:
+    def discuter_en_flux(self, messages: list[dict], outils: list[dict] | None = None,
+                         max_mots: int | None = None) -> Iterator[dict]:
         corps = {
             "messages": messages,
             "stream": True,
             "temperature": self.temperature,
             "cache_prompt": True,  # réutilise les consignes et l'historique déjà calculés
+            "id_slot": ESPACE_CONVERSATION,
         }
         if outils:
             corps["tools"] = outils
+        if max_mots:
+            corps["max_tokens"] = max_mots
         appels: dict[int, dict] = {}
         with self._post("/v1/chat/completions", corps) as r:
             for ligne in r:
@@ -105,6 +120,12 @@ class CerveauLlamaCpp:
                 morceau = json.loads(donnees)
                 if "error" in morceau:
                     raise ErreurCerveau(str(morceau["error"]))
+                temps = morceau.get("timings")
+                if temps and temps.get("prompt_ms") is not None and not max_mots:
+                    # Ce que llama.cpp a dû (re)lire avant de répondre : consignes, historique,
+                    # message vocal. Peu de jetons = la mémoire des tours précédents a servi.
+                    log.info("  lecture : %d jetons lus en %.1f s", temps.get("prompt_n", 0),
+                             temps["prompt_ms"] / 1000)
                 for choix in morceau.get("choices") or []:
                     delta = choix.get("delta") or {}
                     if delta.get("content"):
@@ -122,11 +143,13 @@ class CerveauLlamaCpp:
             yield {"outil": a["nom"], "arguments": arguments}
 
     def transcrire(self, wav: bytes) -> str:
-        # Même requête que pour Ollama (point d'accès /v1/audio/transcriptions).
-        return ollama_audio.transcrire(self.adresse, "gemma", wav)
+        """Retranscrit un message vocal dans l'espace annexe (l'appel en cours reste en mémoire)."""
+        texte = self.rediger([self.message_vocal(wav, CONSIGNE_TRANSCRIPTION)], temperature=0.0)
+        return texte.strip().strip('"«»').strip()
 
-    def rediger(self, messages: list[dict]) -> str:
-        corps = {"messages": messages, "stream": False, "temperature": 0.3, "cache_prompt": False}
+    def rediger(self, messages: list[dict], temperature: float = 0.3) -> str:
+        corps = {"messages": messages, "stream": False, "temperature": temperature,
+                 "cache_prompt": False, "id_slot": ESPACE_ANNEXE}
         with self._post("/v1/chat/completions", corps, delai=900) as r:
             reponse = json.load(r)
         return (reponse["choices"][0]["message"].get("content") or "").strip()
@@ -217,7 +240,7 @@ class ServeurLlamaCpp:
             str(r.llamacpp_serveur),
             "-m", str(r.llamacpp_modele),
             "--mmproj", str(r.llamacpp_mmproj),
-            "-c", str(contexte),
+            "-c", str(2 * contexte),   # partagé entre les deux espaces (voir ESPACE_…)
             "-ngl", "99",              # tout le modèle sur la puce graphique
             "--reasoning", "off",      # pas de « réflexion » silencieuse avant de répondre
             "--jinja",                 # modèle de conversation de Gemma 4 (outils)
@@ -225,7 +248,7 @@ class ServeurLlamaCpp:
             "--cache-ram", "0",        # pas de cache de conversations en mémoire vive (8 Go sinon)
             "--host", "127.0.0.1",
             "--port", str(r.llamacpp_port),
-            "-np", "1",                # une seule conversation à la fois
+            "-np", "2",                # espace 0 : l'appel ; espace 1 : retranscriptions, doc
             *profil["args"],
         ]
 
@@ -265,8 +288,8 @@ class ServeurLlamaCpp:
             vider_cache_memoire()
             depuis = self.journal.stat().st_size if self.journal.exists() else 0
             commande = self._commande(profil)
-            log.info("Démarrage de llama.cpp (mode %s, contexte %s ; journal : %s)…",
-                     profil["nom"], commande[commande.index("-c") + 1], self.journal)
+            log.info("Démarrage de llama.cpp (mode %s, contexte %d par espace ; journal : %s)…",
+                     profil["nom"], int(commande[commande.index("-c") + 1]) // 2, self.journal)
             self.processus = subprocess.Popen(
                 commande, stdout=open(self.journal, "ab"), stderr=subprocess.STDOUT, env=env
             )

@@ -103,7 +103,14 @@ def faux_llamacpp(journal: list):
         corps = await req.json()
         journal.append(corps)
         if not corps.get("stream"):
+            premier = corps["messages"][0]["content"]
+            if isinstance(premier, list) and "Transcris" in premier[0]["text"]:
+                texte = transcriptions.pop(0) if transcriptions else ""
+                journal.append({"transcription": "llama.cpp", "espace": corps.get("id_slot")})
+                return {"choices": [{"message": {"role": "assistant", "content": texte}}]}
             return {"choices": [{"message": {"role": "assistant", "content": DOC}}]}
+        if corps.get("max_tokens") == 1:  # lecture anticipée des consignes
+            return StreamingResponse(sse([{"content": "Al"}]), media_type="text/event-stream")
         dernier = corps["messages"][-1]
         contenu = dernier["content"]
         audio = isinstance(contenu, list) and any(p.get("type") == "input_audio" for p in contenu)
@@ -117,13 +124,6 @@ def faux_llamacpp(journal: list):
         else:
             deltas = [{"content": "Génial ! Quel réglage de laser as-tu utilisé ?"}]
         return StreamingResponse(sse(deltas), media_type="text/event-stream")
-
-    @app.post("/v1/audio/transcriptions")
-    async def transcrire(req: fastapi.Request):
-        corps = (await req.body()).decode("latin-1")
-        assert "RIFF" in corps
-        journal.append({"transcription": "llama.cpp"})
-        return {"text": transcriptions.pop(0) if transcriptions else ""}
 
     @app.get("/health")
     async def sante():
@@ -220,7 +220,7 @@ def test_appel_complet(tmp_path, moteur):
     assert "Maker : J'ai fabriqué une lampe en contreplaqué" in texte and "à bientôt" in texte
     assert float(np.abs(combine.audio_joue()).max()) > 0.05  # la voix est sortie
 
-    flux = [c for c in journal if c.get("stream")]
+    flux = [c for c in journal if c.get("stream") and c.get("max_tokens") != 1]
     assert "téléphone de la documentation du FabLab" in flux[0]["messages"][0]["content"]
     assert flux[1]["tools"][0]["function"]["name"] == "raccrocher"
     vocal = flux[1]["messages"][-1]
@@ -228,6 +228,9 @@ def test_appel_complet(tmp_path, moteur):
         partie = next(p for p in vocal["content"] if p["type"] == "input_audio")
         assert base64.b64decode(partie["input_audio"]["data"])[:4] == b"RIFF"
         assert flux[1]["cache_prompt"] is True
+        # La conversation garde l'espace 0 ; les retranscriptions passent dans l'espace 1.
+        assert all(c["id_slot"] == 0 for c in flux)
+        assert {"transcription": "llama.cpp", "espace": 1} in journal
     else:
         assert base64.b64decode(vocal["images"][0])[:4] == b"RIFF" and flux[1]["think"] is False
         assert {"transcription": "gemma4:e2b", "langue": "fr"} in journal
@@ -382,3 +385,36 @@ def test_appel_termine_en_reposant_le_combine(tmp_path):
     texte = conv.transcription()
     # La phrase dite juste avant de raccrocher est gardée pour la documentation.
     assert "Maker : J'ai fabriqué une lampe" in texte
+
+
+def test_lecture_anticipee_identique_au_debut_de_l_appel(tmp_path):
+    """La lecture anticipée doit envoyer exactement le début du vrai premier tour."""
+    from alloia import audio
+    from alloia.appel import prechauffer
+
+    journal: list = []
+    port = port_libre()
+    faux = lancer_serveur(faux_llamacpp(journal), port)
+    adresse = f"http://127.0.0.1:{port}"
+    r = Reglages(dossier_docs=tmp_path / "docs", pause_s=0.8, fin_apres_silence_s=2, relance_apres_s=60)
+    cerveau = CerveauLlamaCpp(adresse)
+    consignes = (RACINE / "alloia_conduite.md").read_text(encoding="utf-8")
+
+    async def scenario():
+        await asyncio.to_thread(prechauffer, cerveau, consignes)
+        combine = audio.CombineSimule([])
+        await combine.demarrer()
+        try:
+            appel = Appel(r, consignes, VoixSimulee(), detecteur_energie, cerveau)
+            await asyncio.wait_for(appel.derouler(combine, asyncio.Event()), 30)
+        finally:
+            await combine.arreter()
+
+    try:
+        asyncio.run(scenario())
+    finally:
+        faux.should_exit = True
+    anticipee, premier_tour = journal[0], journal[1]
+    assert anticipee["max_tokens"] == 1 and anticipee["id_slot"] == 0
+    assert anticipee["messages"] == premier_tour["messages"]
+    assert anticipee["tools"] == premier_tour["tools"]

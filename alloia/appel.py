@@ -86,6 +86,28 @@ class Conversation:
 
 
 # ---------------------------------------------------------------------------
+# Lecture anticipée : pendant la veille, le cerveau lit déjà les consignes
+# ---------------------------------------------------------------------------
+
+
+def systeme_appel(consignes: str) -> str:
+    return consignes.strip() + "\n\n" + ADAPTATION_ORALE.strip()
+
+
+def prechauffer(cerveau, consignes: str) -> float:
+    """Fait lire au cerveau, à l'avance, exactement le début du prochain appel.
+
+    Au décroché, llama.cpp n'a plus que la salutation à écrire. Renvoie la durée (s).
+    """
+    debut = time.monotonic()
+    messages = [{"role": "system", "content": systeme_appel(consignes)},
+                {"role": "user", "content": DECROCHE}]
+    for _ in cerveau.discuter_en_flux(messages, OUTILS, max_mots=1):
+        pass
+    return time.monotonic() - debut
+
+
+# ---------------------------------------------------------------------------
 # Veille : attendre que quelqu'un décroche et parle
 # ---------------------------------------------------------------------------
 
@@ -127,7 +149,7 @@ async def attendre_decroche(
 class Appel:
     def __init__(self, r: Reglages, consignes: str, voix, detecteur, cerveau, reparer=None):
         self.r = r
-        self.systeme = consignes.strip() + "\n\n" + ADAPTATION_ORALE.strip()
+        self.systeme = systeme_appel(consignes)
         self.voix = voix
         self.cerveau = cerveau  # CerveauLlamaCpp ou CerveauOllama (alloia/cerveau.py)
         self.reparer = reparer  # redémarre le cerveau s'il s'est arrêté (llama.cpp)

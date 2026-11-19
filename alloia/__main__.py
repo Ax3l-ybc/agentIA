@@ -95,14 +95,27 @@ def preparer_voix(r):
 
 async def boucle_principale(r, combine, voix_agent, detecteur, cerveau, serveur=None, bouton=None) -> None:
     from . import doc
-    from .appel import Appel, attendre_decroche
+    from .appel import Appel, attendre_decroche, prechauffer
     from .bouton import attendre_decroche_bouton
 
     clavier = asyncio.Event()
     ecouter_clavier(asyncio.get_running_loop(), clavier)
     redactions: set[asyncio.Task] = set()
 
+    async def lecture_anticipee():
+        """Pendant la veille, le cerveau lit déjà les consignes du prochain appel."""
+        try:
+            consignes = r.mode_de_conduite.read_text(encoding="utf-8-sig")
+            duree = await asyncio.to_thread(prechauffer, cerveau, consignes)
+            log.info("Consignes lues à l'avance par le cerveau (%.1f s) : il est prêt.", duree)
+        except Exception as exc:  # noqa: BLE001  (pas grave : l'appel les lira lui-même)
+            log.warning("Lecture anticipée des consignes impossible : %s", exc)
+
     while True:
+        if serveur is not None:  # llama.cpp : la mémoire de l'espace 0 sert d'un tour à l'autre
+            tache = asyncio.create_task(lecture_anticipee())
+            redactions.add(tache)
+            tache.add_done_callback(redactions.discard)
         if bouton is not None:
             if bouton.decroche:
                 log.info("Le combiné n'est pas sur son socle : reposez-le pour être prêt.")
