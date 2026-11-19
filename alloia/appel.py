@@ -49,6 +49,8 @@ ADAPTATION_ORALE = """
 - Les messages du maker t'arrivent en audio. Réponds à ce qu'il dit : ne répète pas et ne
   transcris pas ses paroles.
 - Les messages entre parenthèses ne viennent pas du maker : ce sont des indications sur l'appel.
+- Si le maker dit au revoir ou qu'il a fini : ne pose plus aucune question. Remercie-le en une
+  phrase, dis que la documentation va être rédigée, et termine par « Au revoir ! ».
 - Commence chaque réponse par une réaction très courte de quelques mots (comme on le fait au
   téléphone), suivie d'une virgule ou d'un point, puis enchaîne.
 """
@@ -65,6 +67,33 @@ _MOTS_VIDES = set("""alors aussi avec avez avoir avais cette comme dans donc ell
 être fait faire leur mais même moins nous peux peut plus pour quel quelle quelles quels quoi sans
 sont sous suis tout toute tous très vous votre veux""".split())
 EXCUSE = "Désolé, j'ai eu un petit souci. Peux-tu répéter ce que tu viens de dire ?"
+
+# Les pistes de la documentation, dans l'ordre où AlloIA les propose, avec les mots qui
+# signalent qu'une question porte dessus. Le programme tient le fil : un sujet sur lequel
+# AlloIA a déjà posé deux questions est clos, et on lui propose la piste suivante.
+PISTES = [
+    ("à quoi sert le projet et d'où vient l'idée",
+     ("but", "sert", "servir", "idée", "usage", "utilité", "inspir", "pourquoi")),
+    ("les matériaux", ("bois", "matériau", "matière", "contreplaqué", "mdf", "épaisseur", "pla",
+                       "filament", "plexi", "acrylique", "tissu", "métal", "chute", "dimension")),
+    ("les machines et leurs réglages", ("laser", "imprimante", "impression", "fraiseuse", "cnc",
+                                        "machine", "réglage", "puissance", "vitesse", "brodeuse")),
+    ("les logiciels et les fichiers", ("logiciel", "fichier", "inkscape", "fusion", "dessin",
+                                       "dessiné", "modélis", "programm", "code")),
+    ("les étapes de fabrication", ("étape", "assembl", "montage", "monté", "finition", "colle",
+                                   "procédé", "fabrication")),
+    ("les difficultés et comment il s'en est sorti", ("difficult", "problème", "raté", "galère",
+                                                       "obstacle", "compliqué", "délicat", "erreur")),
+    ("le temps passé et le coût", ("temps", "heure", "durée", "coût", "prix", "combien", "budget")),
+    ("ses conseils pour quelqu'un qui voudrait le refaire", ("conseil", "refaire", "améliorer",
+                                                             "changer", "recommand")),
+]
+
+
+def pistes_de(question: str) -> list[int]:
+    q = question.lower()
+    return [i for i, (_, mots) in enumerate(PISTES) if any(m in q for m in mots)]
+
 
 def mots_cles(question: str) -> set[str]:
     return {m for m in re.findall(r"\w+", question.lower()) if len(m) > 3 and m not in _MOTS_VIDES}
@@ -190,6 +219,7 @@ class Appel:
         self.transcriptions: set[asyncio.Task] = set()
         self.raccrocher = False
         self.questions: list[str] = []  # questions déjà posées par AlloIA
+        self.questions_par_piste = [0] * len(PISTES)
         self.repetition = False  # AlloIA vient de reposer une question déjà posée
         self.raccroche: asyncio.Event | None = None  # combiné reposé sur le socle (bouton)
 
@@ -211,9 +241,7 @@ class Appel:
             # Rappel des dernières questions posées : un petit modèle oublie vite ce qu'il a déjà
             # demandé et a tendance à insister. (Ce rappel n'est pas gardé dans l'historique : il
             # ne gêne pas la mémoire de llama.cpp.)
-            if self.questions:
-                consigne = (f"(Questions déjà posées, à ne pas reposer : {' / '.join(self.questions[-4:])})"
-                            f" {consigne}")
+            consigne = self.fil_conducteur() + consigne
             if self.repetition:  # filet de sécurité : ne pas insister sur une question
                 consigne = PASSER_A_AUTRE_CHOSE + " " + consigne
             actuel = self.cerveau.message_vocal(wav, consigne)
@@ -305,13 +333,33 @@ class Appel:
             echange = conv.ajouter("maker", "")
             self._lancer_transcription(wav, message_maker, echange)
         conv.ajouter("alloia", reponse)
+        if _AU_REVOIR.search(reponse):  # AlloIA a dit au revoir : on raccroche après sa phrase
+            self.raccrocher = True
         question = derniere_question(reponse)
         if question:
+            for i in pistes_de(question):
+                self.questions_par_piste[i] += 1
             if deja_posee(question, self.questions):
                 log.info("  question déjà posée : AlloIA passera à autre chose au tour suivant.")
                 self.repetition = True
             self.questions.append(question)
         return reponse
+
+    def fil_conducteur(self) -> str:
+        """Indication donnée au cerveau avec chaque phrase du maker : les sujets clos (sur
+        lesquels AlloIA a déjà insisté) et la prochaine piste à proposer."""
+        if not self.questions:
+            return ""
+        clos = [PISTES[i][0] for i, n in enumerate(self.questions_par_piste) if n >= 2]
+        libres = [PISTES[i][0] for i, n in enumerate(self.questions_par_piste) if n == 0]
+        texte = f"(Ta dernière question : « {self.questions[-1]} » Ne la repose pas."
+        if clos:
+            texte += f" Sujets déjà traités, n'y reviens plus : {', '.join(clos)}."
+        if libres:
+            texte += f" Si sa réponse ne t'ouvre pas une suite naturelle, passe à : {libres[0]}."
+        else:
+            texte += " Tu as fait le tour : demande-lui s'il veut ajouter quelque chose."
+        return texte + ") "
 
     def _lancer_transcription(self, wav: bytes, message: dict, echange: Echange) -> None:
         async def tache():
@@ -460,8 +508,8 @@ class Appel:
                     continue
                 dernier_maker = next((e.texte for e in reversed(conv.echanges) if e.role == "maker"), "")
                 # Filet de sécurité si le modèle n'appelle pas « raccrocher » : un « au revoir »
-                # du maker termine l'appel quelques secondes après la dernière réponse.
-                if _AU_REVOIR.search(dernier_maker[-60:]) and maintenant - derniere_activite > 4:
+                # du maker termine l'appel peu après la dernière réponse d'AlloIA.
+                if _AU_REVOIR.search(dernier_maker[-60:]) and maintenant - derniere_activite > 1.5:
                     conv.raison_fin = "au revoir"
                     break
                 if maintenant - derniere_parole[0] > r.fin_apres_silence_s:

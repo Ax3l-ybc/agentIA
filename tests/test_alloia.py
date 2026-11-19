@@ -474,8 +474,43 @@ def test_question_reposee_fait_passer_a_autre_chose(tmp_path):
     # 1er tour : rien de spécial ; 2e tour : la question n'a pas encore été répétée ;
     # 3e tour : AlloIA a reposé la même question au 2e tour -> on lui dit de passer à autre chose.
     assert cerveau.consignes[0] == CONSIGNE_VOCALE
-    # Dès le 2e tour, les questions déjà posées sont rappelées au cerveau.
-    assert "déjà posées" in cerveau.consignes[1] and "épaisseur de contreplaqué" in cerveau.consignes[1]
+    # Dès le 2e tour, la dernière question est rappelée au cerveau, avec la piste suivante.
+    assert "Ne la repose pas" in cerveau.consignes[1] and "épaisseur de contreplaqué" in cerveau.consignes[1]
+    # Deux questions sur les matériaux : le sujet est clos, AlloIA doit passer à autre chose.
+    assert "n'y reviens plus : les matériaux" in cerveau.consignes[2]
     assert not cerveau.consignes[1].startswith(PASSER_A_AUTRE_CHOSE)
     assert cerveau.consignes[2].startswith(PASSER_A_AUTRE_CHOSE)
     assert all(c.endswith(CONSIGNE_VOCALE) for c in cerveau.consignes)
+
+
+def test_fil_conducteur_et_au_revoir_d_alloia(tmp_path):
+    from alloia import audio
+    from alloia.appel import PISTES, pistes_de
+
+    assert [PISTES[i][0] for i in pistes_de("Quels réglages de laser as-tu choisis ?")] \
+        == ["les machines et leurs réglages"]
+
+    class CerveauPoli:
+        def message_vocal(self, wav, consigne):
+            return {"role": "user", "content": consigne}
+
+        def discuter_en_flux(self, messages, outils=None):
+            yield {"texte": "Merci beaucoup, je vais rédiger la documentation. Au revoir !"}
+
+        def transcrire(self, wav):
+            return "C'est tout, au revoir"
+
+    appel = Appel(Reglages(dossier_docs=tmp_path), "Consignes.", VoixSimulee(), detecteur_energie,
+                  CerveauPoli())
+
+    async def scenario():
+        combine = audio.CombineSimule([])
+        await combine.demarrer()
+        try:
+            await appel.tour(combine, Conversation(debut=datetime.datetime.now()), ton(0.5, 16000))
+        finally:
+            await combine.arreter()
+
+    asyncio.run(scenario())
+    # Gemma n'appelle pas toujours l'outil « raccrocher » : un au revoir d'AlloIA suffit.
+    assert appel.raccrocher
