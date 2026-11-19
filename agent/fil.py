@@ -89,12 +89,11 @@ class Fil:
         if self.repetition:
             texte += PASSER_A_AUTRE_CHOSE + " "
         if self.questions:
-            dernieres = " / ".join(f"« {q} »" for q in self.questions[-3:])
-            texte += (f"(Tes dernières questions : {dernieres}. Ne les repose pas, même reformulées : "
-                      "si l'étudiant y a répondu, même en partie, avance.) ")
+            dernieres = " / ".join(f"« {q} »" for q in self.questions[-2:])
+            texte += f"(Tes questions précédentes : {dernieres}. Ta prochaine question doit être nouvelle.) "
         neutre, appreciative = proposer_reactions(self.ouvertures[-5:])
-        texte += (f"(Pour commencer ta réponse, choisis « {neutre}, » ou « {appreciative}, » "
-                  "selon ce qu'il vient de dire.) ")
+        texte += (f"(Commence par « {neutre}, » ou « {appreciative}, » selon ce qu'il vient de dire, "
+                  "puis réagis en une phrase et pose-lui une question précise.) ")
         return texte
 
     def nettoyer_debut(self, texte: str) -> str:

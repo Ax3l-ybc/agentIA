@@ -380,7 +380,7 @@ def test_seance_complete(coffre_test):
             assert journal[i - 1].get("memoire") == "save" and journal[i + 1].get("memoire") == "restore"
     # Le rappel des questions et le choix de la réaction accompagnent le message vocal.
     consigne = next(p for p in vocal["messages"][-1]["content"] if p["type"] == "text")["text"]
-    assert "Pour commencer ta réponse, choisis" in consigne
+    assert "pose-lui une question précise" in consigne
     # Les notes n'ont pas bougé d'un octet.
     assert empreinte(notes) == avant
 
@@ -432,7 +432,7 @@ def test_fil_questions_et_reactions():
     from agent.fil import PASSER_A_AUTRE_CHOSE, Fil, proposer_reactions, retirer_tic
 
     fil = Fil()
-    assert "dernières questions" not in fil.indication()
+    assert "questions précédentes" not in fil.indication()
     assert not fil.noter("Intéressant. Quelle est ta problématique exactement ?", True)
     assert "« Quelle est ta problématique exactement ? »" in fil.indication()
     # Il repose la même question : au tour suivant, on lui demande de passer à autre chose.
