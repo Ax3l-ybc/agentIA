@@ -160,6 +160,47 @@ svg { width: 18px; height: 18px; flex: none; }
 .etat-voix.ecoute { color: var(--actif); font-weight: 600; }
 .mention { text-align: center; font-size: .75rem; color: var(--encre-douce); margin-top: .5rem; }
 
+/* ------------------------------------------------------------ fichiers joints */
+.pieces { display: flex; flex-wrap: wrap; gap: .4rem; padding: .2rem 0 .3rem; }
+.pieces:empty { display: none; }
+.piece { display: inline-flex; align-items: center; gap: .4rem; max-width: 260px; padding: .35rem .55rem;
+         border-radius: 10px; border: 1px solid var(--bord); background: var(--fond); font-size: .85rem; }
+.piece .nom-fichier { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.piece .detail { color: var(--encre-douce); font-size: .75rem; white-space: nowrap; }
+.piece.erreur { border-color: var(--danger); color: var(--danger); }
+.piece .mini { padding: 2px; }
+.message.utilisateur .colonne-droite { display: flex; flex-direction: column; align-items: flex-end; gap: .35rem; max-width: 80%; }
+.message.utilisateur .colonne-droite .contenu { max-width: 100%; }
+.depot { position: fixed; inset: 0; background: rgba(46,107,94,.12); border: 3px dashed var(--accent);
+         display: none; align-items: center; justify-content: center; z-index: 15; font-size: 1.2rem;
+         font-weight: 600; color: var(--accent); pointer-events: none; }
+.depot.visible { display: flex; }
+
+/* ------------------------------------------------------------ actions sous une réponse */
+.actions-reponse { display: flex; gap: .25rem; margin-top: .35rem; opacity: .75; }
+.message.assistant:hover .actions-reponse { opacity: 1; }
+.action { display: inline-flex; align-items: center; gap: .3rem; border: none; background: none; padding: .25rem .45rem;
+          border-radius: 7px; color: var(--encre-douce); font-size: .8rem; }
+.action:hover { background: var(--survol); color: var(--encre); }
+.action svg { width: 15px; height: 15px; }
+.entete .espace { flex: 1; }
+
+/* ------------------------------------------------------------ réunion */
+.reunion-choix { display: grid; grid-template-columns: 1fr 1fr; gap: .75rem; margin: .5rem 0 1rem; }
+.carte-choix { border: 1px solid var(--bord); border-radius: 12px; padding: 1rem; background: var(--fond);
+               text-align: left; display: flex; flex-direction: column; gap: .35rem; }
+.carte-choix:hover { border-color: var(--accent); }
+.carte-choix strong { display: flex; align-items: center; gap: .45rem; }
+.carte-choix span { color: var(--encre-douce); font-size: .85rem; line-height: 1.4; }
+.chrono { font-size: 2.4rem; font-variant-numeric: tabular-nums; text-align: center; margin: .5rem 0; }
+.point-rec { display: inline-block; width: 12px; height: 12px; border-radius: 50%; background: var(--actif);
+             animation: clignote 1.2s steps(1) infinite; margin-right: .5rem; vertical-align: middle; }
+.barre-progres { height: 8px; border-radius: 99px; background: var(--survol); overflow: hidden; margin: .75rem 0; }
+.barre-progres div { height: 100%; background: var(--accent); width: 0; transition: width .4s; }
+.texte-doux { color: var(--encre-douce); font-size: .88rem; line-height: 1.5; }
+.apercu-reunion { font-style: italic; color: var(--encre-douce); font-size: .85rem; min-height: 2.5em; margin-top: .5rem; }
+@media (max-width: 760px) { .reunion-choix { grid-template-columns: 1fr; } }
+
 /* ------------------------------------------------------------ fenêtre de réglage */
 .voile { position: fixed; inset: 0; background: rgba(0,0,0,.4); display: none; align-items: center; justify-content: center; z-index: 20; padding: 1rem; }
 .voile.visible { display: flex; }
@@ -199,6 +240,10 @@ svg { width: 18px; height: 18px; flex: none; }
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
         Nouvelle conversation
     </button>
+    <button class="bouton-plein" id="ouvrirReunion" style="margin-top:0">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+        Compte rendu de réunion
+    </button>
     <div class="defile">
         <div class="titre-section">Assistants</div>
         <div id="listeAssistants"></div>
@@ -220,12 +265,22 @@ svg { width: 18px; height: 18px; flex: none; }
             <div class="titre" id="titreConversation">Nouvelle conversation</div>
             <div class="sous-titre" id="sousTitre"></div>
         </div>
+        <span class="espace"></span>
+        <button class="action" id="exporterConversation" title="Enregistrer toute la conversation dans un document Word" style="display:none">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6M12 18v-6M9 15l3 3 3-3"/></svg>
+            Exporter en Word
+        </button>
     </div>
     <div id="fil"><div class="colonne" id="colonne"></div></div>
     <div class="saisie">
         <div class="cadre">
+            <div class="pieces" id="pieces"></div>
             <textarea id="zoneTexte" rows="1" placeholder="Écrivez votre message…"></textarea>
             <div class="outils">
+                <button class="rond" id="joindre" title="Joindre un fichier (PDF, Word, texte)" style="border:none">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>
+                </button>
+                <input type="file" id="choixFichier" multiple accept=".pdf,.docx,.txt,.md,.csv,.json,.xml,.html,.htm,.log,.rtf" hidden>
                 <button class="interrupteur" id="lire" title="Lire les réponses écrites à voix haute">
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 5 6 9H2v6h4l5 4V5z"/><path d="M15.5 8.5a5 5 0 0 1 0 7"/></svg>
                     <span>Lire à voix haute</span>
@@ -244,6 +299,49 @@ svg { width: 18px; height: 18px; flex: none; }
         <div class="mention">L'assistant peut se tromper : vérifiez les informations importantes.</div>
     </div>
 </main>
+
+<div class="depot" id="depot">Déposez vos fichiers ici (PDF, Word, texte)</div>
+
+<div class="voile" id="voileReunion">
+    <div class="fenetre">
+        <header>Compte rendu de réunion</header>
+        <div class="corps">
+            <div id="reunionDebut">
+                <p class="texte-doux">Enregistrez une réunion avec le micro de cet ordinateur, ou importez un
+                enregistrement. L'assistant la retranscrit puis rédige le compte rendu (résumé, décisions,
+                actions, questions en suspens). <strong>Tout reste sur ce PC</strong> ; seul le texte est gardé.</p>
+                <div class="reunion-choix">
+                    <button class="carte-choix" id="reunionEnregistrer">
+                        <strong><span class="point-rec" style="animation:none"></span>Enregistrer</strong>
+                        <span>Posez l'ordinateur au milieu de la table et lancez l'enregistrement.</span>
+                    </button>
+                    <button class="carte-choix" id="reunionImporter">
+                        <strong>
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M17 8l-5-5-5 5M12 3v12"/></svg>
+                            Importer un fichier audio</strong>
+                        <span>Un enregistrement déjà fait (mp3, m4a, wav, ogg…), par exemple avec un téléphone.</span>
+                    </button>
+                </div>
+                <p class="texte-doux" id="reunionAssistant"></p>
+                <input type="file" id="fichierReunion" accept="audio/*,video/*,.mp3,.m4a,.wav,.ogg,.webm,.aac,.flac,.mp4" hidden>
+            </div>
+            <div id="reunionSuivi" style="display:none">
+                <div class="chrono" id="reunionChrono"></div>
+                <p class="texte-doux" id="reunionMessage" style="text-align:center"></p>
+                <div class="barre-progres"><div id="reunionBarre"></div></div>
+                <p class="apercu-reunion" id="reunionApercu"></p>
+                <p class="texte-doux">La transcription prend du temps sur un simple processeur (souvent la moitié
+                de la durée de la réunion) : vous pouvez laisser cette fenêtre ouverte et faire autre chose.
+                Pendant ce temps, l'assistant ne peut pas répondre aux conversations.</p>
+            </div>
+        </div>
+        <footer>
+            <span class="espace"></span>
+            <button type="button" class="bouton" id="reunionFermer">Fermer</button>
+            <button type="button" class="bouton principal" id="reunionTerminer" style="display:none">Terminer et rédiger le compte rendu</button>
+        </footer>
+    </div>
+</div>
 
 <div class="voile" id="voile">
     <form class="fenetre" id="formAssistant" autocomplete="off">
@@ -444,6 +542,7 @@ async function chargerConversations() { conversations = await api("api/conversat
 // ===========================================================================
 function afficherEntete() {
     const a = assistantDe(conv.assistant);
+    $("exporterConversation").style.display = conv.messages.length ? "" : "none";
     $("titreConversation").textContent = conv.messages.length ? conv.titre : (a?.nom || "Nouvelle conversation");
     $("sousTitre").textContent = conv.messages.length ? (a?.nom || "") : (a?.description || "");
     document.title = conv.messages.length ? `${conv.titre} – Mon Assistant` : "Mon Assistant";
@@ -461,22 +560,70 @@ function afficherAccueil() {
     colonne.append(bloc);
 }
 
-function ajouterMessage(role, texte, mode = "texte") {
+const ICONE_FICHIER = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/></svg>';
+
+function puceFichier(nom, detail = "") {
+    const p = document.createElement("span"); p.className = "piece";
+    p.innerHTML = ICONE_FICHIER;
+    const n = document.createElement("span"); n.className = "nom-fichier"; n.textContent = nom; p.append(n);
+    if (detail) { const d = document.createElement("span"); d.className = "detail"; d.textContent = detail; p.append(d); }
+    return p;
+}
+
+function ajouterMessage(role, texte, mode = "texte", fichiers = null) {
     $("accueil")?.remove();
     const el = document.createElement("div");
     el.className = "message " + role;
     const contenu = document.createElement("div"); contenu.className = "contenu";
     if (role === "assistant") {
         el.append(pastille(assistantDe(conv.assistant)?.nom || "A"));
+        const corps = document.createElement("div"); corps.style.cssText = "flex:1;min-width:0";
         contenu.innerHTML = markdown(texte);
+        corps.append(contenu);
+        el.append(corps);
     } else {
         if (mode === "voix") contenu.innerHTML = '<svg class="voix-icone" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10a7 7 0 0 0 14 0"/></svg>';
         contenu.append(document.createTextNode(texte));
+        const droite = document.createElement("div"); droite.className = "colonne-droite";
+        if (fichiers?.length) {
+            const liste = document.createElement("div"); liste.className = "pieces";
+            for (const f of fichiers) liste.append(puceFichier(f.nom, f.tronque ? "début seulement" : ""));
+            droite.append(liste);
+        }
+        if (texte || mode === "voix") droite.append(contenu);
+        el.append(droite);
     }
-    el.append(contenu);
     colonne.append(el);
     defiler();
     return contenu;
+}
+
+// Sous chaque réponse terminée : copier le texte, ou l'enregistrer en Word.
+function ajouterActions(contenu, texte, index) {
+    const corps = contenu.parentElement;
+    corps.querySelector(".actions-reponse")?.remove();
+    const barre = document.createElement("div"); barre.className = "actions-reponse";
+    const copier = document.createElement("button"); copier.className = "action"; copier.title = "Copier la réponse";
+    copier.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg><span>Copier</span>';
+    copier.onclick = async () => {
+        try { await navigator.clipboard.writeText(texte); }
+        catch (e) {  // ancien navigateur : copie par une zone de texte cachée
+            const z = document.createElement("textarea"); z.value = texte; document.body.append(z);
+            z.select(); document.execCommand("copy"); z.remove();
+        }
+        copier.querySelector("span").textContent = "Copié !";
+        setTimeout(() => { copier.querySelector("span").textContent = "Copier"; }, 1500);
+    };
+    barre.append(copier);
+    if (index !== undefined && index !== null) {
+        const word = document.createElement("a"); word.className = "action"; word.title = "Enregistrer cette réponse dans un document Word";
+        word.href = `api/conversations/${conv.id}/word?message=${index}`;
+        word.setAttribute("download", "");  // le nom du fichier vient du serveur
+        word.style.textDecoration = "none";
+        word.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6M12 18v-6M9 15l3 3 3-3"/></svg><span>Word</span>';
+        barre.append(word);
+    }
+    corps.append(barre);
 }
 
 function noteOutil(texte) {
@@ -502,7 +649,11 @@ function afficherConversation() {
     reponse = null; attente = null;
     afficherEntete();
     if (!conv.messages.length) afficherAccueil();
-    for (const m of conv.messages) ajouterMessage(m.role, m.texte || (m.mode === "voix" ? "(message vocal)" : ""), m.mode);
+    conv.messages.forEach((m, i) => {
+        const texte = m.texte || (m.mode === "voix" && !m.fichiers ? "(message vocal)" : "");
+        const contenu = ajouterMessage(m.role, texte, m.mode, m.fichiers);
+        if (m.role === "assistant") ajouterActions(contenu, m.texte, i);
+    });
     afficherAssistants(); afficherConversations();
 }
 
@@ -584,7 +735,9 @@ function surMessage(ev) {
             if (!reponse) reponse = { el: ajouterMessage("assistant", ""), texte: "" };
             reponse.el.classList.remove("curseur");
             reponse.el.innerHTML = markdown(m.texte);
+            ajouterActions(reponse.el, m.texte, m.index);
             conv.messages.push({ role: "assistant", texte: m.texte });
+            afficherEntete();
             reponse = null;
             finGeneration();
             afficherAssistants();
@@ -612,19 +765,82 @@ function finGeneration() {
     $("envoyer").title = "Envoyer";
     majBoutonEnvoyer();
 }
-function majBoutonEnvoyer() { if (!genere) $("envoyer").disabled = !zone.value.trim(); }
+function piecesPretes() { return pieces.filter(p => p.id); }
+function majBoutonEnvoyer() {
+    if (genere) return;
+    const enLecture = pieces.some(p => p.enCours);
+    $("envoyer").disabled = enLecture || !(zone.value.trim() || piecesPretes().length);
+}
 
 function envoyer() {
     if (genere) { envoyerJSON({ type: "stop" }); couperVoix(); return; }
-    const texte = zone.value.trim();
-    if (!texte || !ws || ws.readyState !== WebSocket.OPEN) return;
+    const texte = zone.value.trim(), jointes = piecesPretes();
+    if ((!texte && !jointes.length) || pieces.some(p => p.enCours) || !ws || ws.readyState !== WebSocket.OPEN) return;
     if (lireAVoixHaute) preparerAudio();
-    ajouterMessage("utilisateur", texte);
-    conv.messages.push({ role: "utilisateur", texte, mode: "texte" });
-    envoyerJSON({ type: "texte", contenu: texte, lire: lireAVoixHaute && !!infos.voix_disponible });
-    zone.value = ""; ajusterZone();
+    const fichiers = jointes.map(p => ({ nom: p.nom, tronque: p.tronque }));
+    ajouterMessage("utilisateur", texte, "texte", fichiers);
+    conv.messages.push({ role: "utilisateur", texte: texte || fichiers[0].nom, mode: "texte", fichiers });
+    envoyerJSON({ type: "texte", contenu: texte, lire: lireAVoixHaute && !!infos.voix_disponible,
+                  fichiers: jointes.map(p => p.id) });
+    zone.value = ""; pieces = []; afficherPieces(); ajusterZone();
     debutGeneration(); montrerAttente();
 }
+
+// ===========================================================================
+// Fichiers joints : trombone ou glisser-déposer
+// ===========================================================================
+let pieces = [];  // {nom, enCours, id, caracteres, tronque, erreur}
+
+function afficherPieces() {
+    const zoneP = $("pieces"); zoneP.innerHTML = "";
+    for (const p of pieces) {
+        const detail = p.enCours ? "lecture…" : p.erreur ? "" : p.tronque ? "long : début seulement" :
+            `${Math.max(1, Math.round(p.caracteres / 1000))} k caractères`;
+        const puce = puceFichier(p.nom, detail);
+        if (p.erreur) { puce.classList.add("erreur"); puce.title = p.erreur; puce.querySelector(".nom-fichier").textContent = p.erreur; }
+        const retirer = document.createElement("button"); retirer.className = "mini"; retirer.title = "Retirer";
+        retirer.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg>';
+        retirer.onclick = () => { pieces = pieces.filter(x => x !== p); afficherPieces(); majBoutonEnvoyer(); };
+        puce.append(retirer);
+        zoneP.append(puce);
+    }
+    majBoutonEnvoyer();
+}
+
+async function joindre(fichiers) {
+    for (const f of fichiers) {
+        const p = { nom: f.name, enCours: true };
+        pieces.push(p); afficherPieces();
+        try {
+            const r = await fetch(`api/fichiers?nom=${encodeURIComponent(f.name)}`, { method: "POST", body: f });
+            const d = await r.json();
+            if (!r.ok) throw new Error(d.erreur || "Fichier illisible");
+            Object.assign(p, d);
+        } catch (e) { p.erreur = e.message; }
+        p.enCours = false;
+        afficherPieces();
+    }
+    zone.focus();
+}
+$("joindre").onclick = () => $("choixFichier").click();
+$("choixFichier").onchange = (e) => { joindre([...e.target.files]); e.target.value = ""; };
+let profondeurDepot = 0;
+const avecFichiers = (e) => [...(e.dataTransfer?.types || [])].includes("Files");
+document.addEventListener("dragenter", (e) => { if (!avecFichiers(e)) return; profondeurDepot++; $("depot").classList.add("visible"); });
+document.addEventListener("dragleave", (e) => { if (!avecFichiers(e)) return; if (--profondeurDepot <= 0) { profondeurDepot = 0; $("depot").classList.remove("visible"); } });
+document.addEventListener("dragover", (e) => { if (avecFichiers(e)) e.preventDefault(); });
+document.addEventListener("drop", (e) => {
+    if (!avecFichiers(e)) return;
+    e.preventDefault(); profondeurDepot = 0; $("depot").classList.remove("visible");
+    if ($("voileReunion").classList.contains("visible")) return;
+    joindre([...e.dataTransfer.files]);
+});
+$("exporterConversation").onclick = () => {
+    if (!conv?.messages.length) return;
+    const lien = document.createElement("a");
+    lien.href = `api/conversations/${conv.id}/word`; lien.setAttribute("download", "");
+    document.body.append(lien); lien.click(); lien.remove();
+};
 
 function ajusterZone() { zone.style.height = "auto"; zone.style.height = Math.min(zone.scrollHeight, 220) + "px"; majBoutonEnvoyer(); }
 zone.addEventListener("input", ajusterZone);
@@ -709,6 +925,15 @@ class Capteur extends AudioWorkletProcessor {
 }
 registerProcessor("capteur", Capteur);`;
 
+let capteurCharge = null;  // le module du capteur, chargé une fois par contexte audio
+function chargerCapteur() {
+    if (!capteurCharge || capteurCharge.contexte !== contexteAudio) {
+        const url = URL.createObjectURL(new Blob([CODE_CAPTEUR], { type: "application/javascript" }));
+        capteurCharge = { contexte: contexteAudio, promesse: contexteAudio.audioWorklet.addModule(url) };
+    }
+    return capteurCharge.promesse;
+}
+
 async function demarrerMicro() {
     if (!infos.voix_disponible) {
         noteOutil("La voix n'est pas disponible : vérifiez le jeton Hugging Face dans config.yaml (voir le README).");
@@ -722,8 +947,7 @@ async function demarrerMicro() {
         noteOutil("Accès au micro refusé : autorisez-le dans le navigateur (icône à gauche de l'adresse).");
         return;
     }
-    const url = URL.createObjectURL(new Blob([CODE_CAPTEUR], { type: "application/javascript" }));
-    await contexteAudio.audioWorklet.addModule(url);
+    await chargerCapteur();
     capteur = new AudioWorkletNode(contexteAudio, "capteur");
     contexteAudio.createMediaStreamSource(flux).connect(capteur);
     capteur.port.onmessage = (e) => { if (voixActive && ws && ws.readyState === WebSocket.OPEN) ws.send(e.data); };
@@ -743,6 +967,112 @@ function arreterMicro() {
     afficherEtatVoix("");
 }
 $("micro").onclick = () => voixActive ? arreterMicro() : demarrerMicro();
+
+// ===========================================================================
+// Compte rendu de réunion
+// ===========================================================================
+let reunion = null;  // {id, ws, flux, capteur, debut, suivi}
+
+function ouvrirReunion() {
+    arreterMicro();
+    $("reunionDebut").style.display = ""; $("reunionSuivi").style.display = "none";
+    $("reunionTerminer").style.display = "none"; $("reunionFermer").textContent = "Fermer";
+    const a = assistantDe(conv?.assistant);
+    $("reunionAssistant").textContent = a ? `Vos questions sur la réunion seront traitées par « ${a.nom} ».` : "";
+    $("voileReunion").classList.add("visible");
+}
+function fermerReunion() {
+    if (reunion?.ws) {
+        if (!confirm("Annuler l'enregistrement de la réunion ? Rien ne sera gardé.")) return;
+        try { reunion.ws.send(JSON.stringify({ type: "annuler" })); } catch (e) {}
+        arreterEnregistrement();
+    }
+    if (reunion?.suivi) { clearInterval(reunion.suivi); reunion.suivi = null; }
+    reunion = null;
+    $("voileReunion").classList.remove("visible");
+}
+function afficherSuivi(texte) {
+    $("reunionDebut").style.display = "none"; $("reunionSuivi").style.display = "";
+    $("reunionMessage").textContent = texte || "";
+}
+
+async function demarrerEnregistrement() {
+    preparerAudio();
+    let flux;
+    try {
+        flux = await navigator.mediaDevices.getUserMedia({
+            audio: { echoCancellation: false, noiseSuppression: true, autoGainControl: true, channelCount: 1 } });
+    } catch (e) { alert("Accès au micro refusé : autorisez-le dans le navigateur (icône à gauche de l'adresse)."); return; }
+    await chargerCapteur();
+    const capteurR = new AudioWorkletNode(contexteAudio, "capteur");
+    contexteAudio.createMediaStreamSource(flux).connect(capteurR);
+    const proto = location.protocol === "https:" ? "wss:" : "ws:";
+    const lien = new WebSocket(`${proto}//${location.host}/ws-reunion?assistant=${encodeURIComponent(conv?.assistant || "")}`);
+    lien.binaryType = "arraybuffer";
+    reunion = { ws: lien, flux, capteur: capteurR, debut: Date.now() };
+    lien.onmessage = (e) => { const d = JSON.parse(e.data); if (d.id) { reunion.id = d.id; suivreReunion(); } };
+    capteurR.port.onmessage = (e) => { if (lien.readyState === WebSocket.OPEN) lien.send(e.data); };
+    afficherSuivi("Enregistrement en cours… Parlez normalement, l'ordinateur au milieu de la table.");
+    $("reunionTerminer").style.display = ""; $("reunionFermer").textContent = "Annuler";
+}
+
+function arreterEnregistrement() {
+    if (!reunion) return;
+    reunion.flux?.getTracks().forEach(t => t.stop());
+    reunion.capteur?.disconnect();
+    reunion.flux = reunion.capteur = null;
+    if (reunion.ws) { const l = reunion.ws; reunion.ws = null; setTimeout(() => l.close(), 300); }
+}
+
+$("reunionTerminer").onclick = () => {
+    if (!reunion?.ws) return;
+    reunion.ws.send(JSON.stringify({ type: "fin" }));
+    arreterEnregistrement();
+    reunion.finEnregistrement = Date.now();
+    $("reunionTerminer").style.display = "none"; $("reunionFermer").textContent = "Fermer";
+};
+
+function suivreReunion() {
+    const chrono = (ms) => { const s = Math.floor(ms / 1000); return `${String(Math.floor(s / 60)).padStart(2, "0")}:${String(s % 60).padStart(2, "0")}`; };
+    const id = reunion.id, r = reunion;
+    r.suivi = setInterval(async () => {
+        if (r.debut) $("reunionChrono").innerHTML = (r.ws ? '<span class="point-rec"></span>' : "") + chrono((r.finEnregistrement || Date.now()) - r.debut);
+        let e;
+        try { e = await api(`api/reunions/${id}`); } catch (err) { return; }
+        if (!r.debut) $("reunionChrono").textContent = e.duree;
+        if (!r.ws || e.etape !== "enregistrement") $("reunionMessage").textContent = e.message || "";
+        $("reunionBarre").style.width = e.total ? `${Math.round(100 * e.faits / e.total)}%` : "0";
+        $("reunionApercu").textContent = e.apercu ? `« …${e.apercu} »` : "";
+        if (e.etape === "termine" && e.conversation) {
+            clearInterval(r.suivi); reunion = null;
+            $("voileReunion").classList.remove("visible");
+            await chargerConversations();
+            ouvrirConversation(e.conversation);
+        } else if (e.etape === "erreur" || e.etape === "annulee") {
+            clearInterval(r.suivi);
+            $("reunionMessage").textContent = e.message;
+        }
+    }, 1000);
+}
+
+$("ouvrirReunion").onclick = ouvrirReunion;
+$("reunionFermer").onclick = fermerReunion;
+$("reunionEnregistrer").onclick = demarrerEnregistrement;
+$("reunionImporter").onclick = () => $("fichierReunion").click();
+$("fichierReunion").onchange = async (e) => {
+    const f = e.target.files[0]; e.target.value = "";
+    if (!f) return;
+    afficherSuivi(`Envoi de « ${f.name} »…`);
+    $("reunionChrono").textContent = "";
+    try {
+        const r = await fetch(`api/reunions?nom=${encodeURIComponent(f.name)}&assistant=${encodeURIComponent(conv?.assistant || "")}`,
+                              { method: "POST", body: f });
+        const d = await r.json();
+        if (!r.ok) throw new Error(d.erreur || "Envoi impossible");
+        reunion = { id: d.id };
+        suivreReunion();
+    } catch (err) { $("reunionMessage").textContent = err.message; }
+};
 
 // ===========================================================================
 // Créer ou modifier un assistant
@@ -780,6 +1110,7 @@ function fermerFormulaire() { $("voile").classList.remove("visible"); }
 $("annulerForm").onclick = fermerFormulaire;
 $("voile").addEventListener("mousedown", (e) => { if (e.target === $("voile")) fermerFormulaire(); });
 document.addEventListener("keydown", (e) => { if (e.key === "Escape") fermerFormulaire(); });
+window.addEventListener("beforeunload", (e) => { if (reunion?.ws) { e.preventDefault(); e.returnValue = ""; } });
 $("creerAssistant").onclick = () => ouvrirFormulaire(null);
 
 $("formAssistant").onsubmit = async (e) => {

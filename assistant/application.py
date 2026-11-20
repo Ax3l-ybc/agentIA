@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import pathlib
 import re
+import secrets
 
 import fastapi
 import fastapi.responses
@@ -29,6 +30,32 @@ class Application:
         self.reparer = reparer  # redémarre llama.cpp s'il s'arrête
         self.profils = Profils(reglages.dossier_assistants)
         self.conversations = Conversations(reglages.dossier_conversations)
+        self.pieces: dict[str, dict] = {}  # fichiers joints, en attente du message qui les envoie
+        self.reunions: dict = {}  # comptes rendus de réunion en cours (voir reunion.py)
+
+    def deposer_fichier(self, nom: str, donnees: bytes) -> dict:
+        """Lit un fichier joint et garde son texte jusqu'à l'envoi du message."""
+        from .fichiers import extraire_texte, tronquer
+
+        texte = extraire_texte(nom, donnees)
+        texte, tronque = tronquer(texte)
+        ident = secrets.token_hex(6)
+        self.pieces[ident] = {"nom": nom, "texte": texte, "tronque": tronque}
+        while len(self.pieces) > 50:  # fichiers jamais envoyés : on oublie les plus vieux
+            self.pieces.pop(next(iter(self.pieces)))
+        return {"id": ident, "nom": nom, "caracteres": len(texte), "tronque": tronque}
+
+    def prendre_fichiers(self, idents: list) -> list[dict]:
+        """Les fichiers joints au message. Ensemble, ils tiennent dans la mémoire du modèle."""
+        from .fichiers import CARACTERES_MAX, tronquer
+
+        fichiers = [self.pieces.pop(str(i)) for i in idents if str(i) in self.pieces]
+        if len(fichiers) > 1:
+            part = CARACTERES_MAX // len(fichiers)
+            for f in fichiers:
+                f["texte"], coupe = tronquer(f["texte"], part)
+                f["tronque"] = f["tronque"] or coupe
+        return fichiers
 
 
 def creer_app(app_etat: Application) -> fastapi.FastAPI:
@@ -99,6 +126,83 @@ def creer_app(app_etat: Application) -> fastapi.FastAPI:
             return erreur(str(exc))
         return {"ok": True}
 
+    # --------------------------------------------------------- fichiers joints
+
+    @app.post("/api/fichiers")
+    async def deposer(req: fastapi.Request, nom: str):
+        from .fichiers import FichierIllisible
+
+        donnees = await req.body()
+        try:
+            return app_etat.deposer_fichier(pathlib.Path(nom).name, donnees)
+        except FichierIllisible as exc:
+            return erreur(str(exc))
+
+    # ------------------------------------------------------ comptes rendus de réunion
+
+    def assistant_valide(ident: str) -> str:
+        return (app_etat.profils.lire(ident) or app_etat.profils.par_defaut()).id
+
+    @app.post("/api/reunions")
+    async def importer_reunion(req: fastapi.Request, nom: str, assistant: str = ""):
+        """Un fichier audio de réunion : transcription puis compte rendu, en arrière-plan."""
+        import asyncio
+
+        from .reunion import Reunion
+
+        reunion = Reunion(app_etat, assistant_valide(assistant), pathlib.Path(nom).name)
+        app_etat.reunions[reunion.id] = reunion
+        reunion.import_ = asyncio.create_task(reunion.importer(await req.body()))
+        return reunion.etat()
+
+    @app.get("/api/reunions/{ident}")
+    async def etat_reunion(ident: str):
+        reunion = app_etat.reunions.get(ident)
+        if reunion is None:
+            return erreur("Réunion introuvable.", 404)
+        return reunion.etat()
+
+    @app.websocket("/ws-reunion")
+    async def enregistrer_reunion(ws: fastapi.WebSocket, assistant: str = ""):
+        """Enregistrement en direct : la page envoie le micro (PCM 16 bits, 16 kHz)."""
+        import json
+
+        from .moteurs import pcm16_vers_float
+        from .reunion import Reunion
+
+        await ws.accept()
+        reunion = Reunion(app_etat, assistant_valide(assistant), "enregistrement")
+        app_etat.reunions[reunion.id] = reunion
+        log.info("Enregistrement d'une réunion (%s).", reunion.id)
+        await ws.send_text(json.dumps({"id": reunion.id}))
+        annulee = False
+        try:
+            while True:
+                message = await ws.receive()
+                if message.get("type") == "websocket.disconnect":
+                    break
+                if message.get("bytes") is not None:
+                    reunion.ajouter_audio(pcm16_vers_float(message["bytes"]))
+                elif '"fin"' in (message.get("text") or ""):
+                    break
+                elif '"annuler"' in (message.get("text") or ""):
+                    annulee = True
+                    break
+        except (fastapi.WebSocketDisconnect, RuntimeError):
+            pass
+        finally:
+            if annulee:
+                reunion.tache.cancel()
+                reunion.etape, reunion.message = "annulee", "Enregistrement annulé."
+                log.info("Enregistrement de réunion annulé.")
+                return
+            # Même si la page est fermée, ce qui a été enregistré donne un compte rendu.
+            if reunion.etape == "enregistrement":
+                reunion.etape = "transcription"
+                reunion.message = "Transcription des derniers passages…"
+            reunion.terminer()
+            log.info("Fin de l'enregistrement (%s).", reunion.etat()["duree"])
+
     # ---------------------------------------------------------- conversations
 
     @app.get("/api/conversations")
@@ -130,6 +234,39 @@ def creer_app(app_etat: Application) -> fastapi.FastAPI:
         except ValueError as exc:
             return erreur(str(exc))
         return {"ok": True}
+
+    @app.get("/api/conversations/{ident}/word")
+    async def exporter_word(ident: str, message: int | None = None):
+        """La conversation entière (ou une seule réponse, `message`) en document Word."""
+        from .fichiers import document_word, nom_de_fichier
+
+        try:
+            conv = app_etat.conversations.charger(ident)
+        except ValueError:
+            conv = None
+        if conv is None:
+            return erreur("Conversation introuvable.", 404)
+        profil = app_etat.profils.lire(conv.assistant)
+        nom_assistant = profil.nom if profil else "Assistant"
+        if message is not None:
+            if not 0 <= message < len(conv.messages):
+                return erreur("Message introuvable.", 404)
+            sections = [("", conv.messages[message]["texte"])]
+            titre = conv.titre
+        else:
+            sections = []
+            for m in conv.messages:
+                qui = "Moi" if m["role"] == "utilisateur" else nom_assistant
+                texte = m["texte"] or "(message vocal)"
+                if m.get("fichiers"):
+                    texte += "\n\n" + "\n".join(f"*Fichier joint : {f['nom']}*" for f in m["fichiers"])
+                sections.append((qui, texte))
+            titre = conv.titre
+        donnees = document_word(titre, sections)
+        nom = nom_de_fichier(titre)
+        return fastapi.responses.Response(
+            donnees, media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            headers={"Content-Disposition": f'attachment; filename="{nom}"'})
 
     @app.post("/api/conversations")
     async def nouvelle(donnees: dict = fastapi.Body(...)):

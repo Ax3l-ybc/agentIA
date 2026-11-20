@@ -76,7 +76,14 @@ def faux_llamacpp(journal: list):
         messages = corps["messages"]
         tout = json.dumps(messages, ensure_ascii=False)
         if not corps.get("stream"):
-            texte = "Je voudrais un résumé de ma note." if CONSIGNE_TRANSCRIPTION in tout else "prêt"
+            if CONSIGNE_TRANSCRIPTION in tout:
+                texte = "Je voudrais un résumé de ma note."
+            elif "compte rendu d'une réunion" in tout:
+                texte = "## Résumé\nPoint d'équipe.\n\n## Décisions\n- Commander du pain."
+            elif "Prends des notes" in tout:
+                texte = "- On parle du pain."
+            else:
+                texte = "prêt"
             return {"choices": [{"message": {"role": "assistant", "content": texte}}]}
         dernier = messages[-1]
         if corps.get("max_tokens") == 1:
@@ -376,3 +383,194 @@ def test_raccourci_bureau():
     assert "Meilleur collègue.lnk" in texte and "lancer.bat" in texte
     assert (RACINE / "assistant" / "static" / "meilleur-collegue.ico").read_bytes()[:4] == b"\x00\x00\x01\x00"
     assert "raccourci.ps1" in (RACINE / "installer.bat").read_text(encoding="utf-8")
+
+
+# ---------------------------------------------------------------------------
+# Fichiers joints, export Word, comptes rendus de réunion
+# ---------------------------------------------------------------------------
+
+def pdf_simple(texte: str) -> bytes:
+    """Un petit PDF d'une page contenant `texte` (sans bibliothèque)."""
+    flux = f"BT /F1 12 Tf 72 720 Td ({texte}) Tj ET".encode("latin-1")
+    objets = [b"<< /Type /Catalog /Pages 2 0 R >>",
+              b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+              b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 4 0 R "
+              b"/Resources << /Font << /F1 5 0 R >> >> >>",
+              b"<< /Length " + str(len(flux)).encode() + b" >>\nstream\n" + flux + b"\nendstream",
+              b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>"]
+    sortie, positions = b"%PDF-1.4\n", []
+    for i, o in enumerate(objets, 1):
+        positions.append(len(sortie))
+        sortie += f"{i} 0 obj\n".encode() + o + b"\nendobj\n"
+    debut_xref = len(sortie)
+    sortie += f"xref\n0 {len(objets) + 1}\n0000000000 65535 f \n".encode()
+    sortie += b"".join(f"{p:010d} 00000 n \n".encode() for p in positions)
+    sortie += f"trailer << /Size {len(objets) + 1} /Root 1 0 R >>\nstartxref\n{debut_xref}\n%%EOF".encode()
+    return sortie
+
+
+def docx_simple() -> bytes:
+    import io
+
+    import docx
+
+    d = docx.Document()
+    d.add_heading("Compte rendu", level=1)
+    d.add_paragraph("Le budget est de 300 euros.")
+    d.add_paragraph("Commander les badges", style="List Bullet")
+    t = d.add_table(rows=1, cols=2)
+    t.rows[0].cells[0].text, t.rows[0].cells[1].text = "Poste", "Coût"
+    sortie = io.BytesIO()
+    d.save(sortie)
+    return sortie.getvalue()
+
+
+def test_lire_pdf_word_texte():
+    from assistant.fichiers import FichierIllisible, extraire_texte
+
+    assert "Budget 2026 : 300 euros" in extraire_texte("rapport.pdf", pdf_simple("Budget 2026 : 300 euros"))
+    texte = extraire_texte("cr.docx", docx_simple())
+    assert "# Compte rendu" in texte and "300 euros" in texte and "- Commander les badges" in texte
+    assert "Poste | Coût" in texte
+    assert extraire_texte("note.txt", "Réunion à 14 h".encode("cp1252")) == "Réunion à 14 h"
+    for nom, donnees in (("vieux.doc", b"x"), ("image.png", b"x"), ("vide.txt", b"  ")):
+        with pytest.raises(FichierIllisible):
+            extraire_texte(nom, donnees)
+
+
+def test_export_word():
+    import io
+
+    import docx
+
+    from assistant.fichiers import document_word, nom_de_fichier
+
+    donnees = document_word("Mon titre", [("Moi", "Une question ?"),
+                                          ("Assistant", "## Idées\n- **une** idée\n1. deux\n\nFin `code`.")])
+    d = docx.Document(io.BytesIO(donnees))
+    textes = [(p.style.name, p.text) for p in d.paragraphs]
+    assert ("Title", "Mon titre") in textes and ("Heading 2", "Idées") in textes
+    assert ("List Bullet", "une idée") in textes and ("List Number", "deux") in textes
+    assert nom_de_fichier('Réunion: 12/05 "budget"') == "Reunion 12 05 budget.docx"
+    assert nom_de_fichier("Combien me sera remboursé un dîner, et dans…") == "Combien me sera rembourse un diner, et dans.docx"
+
+
+def test_message_avec_fichier_joint_et_export(environnement):
+    import urllib.request
+
+    env = environnement
+    base = f"http://127.0.0.1:{env['port']}"
+    req = urllib.request.Request(base + "/api/fichiers?nom=rapport.pdf", data=pdf_simple("Chiffre d'affaires : 42 k"),
+                                 method="POST")
+    with urllib.request.urlopen(req) as r:
+        piece = json.load(r)
+    assert piece["nom"] == "rapport.pdf" and not piece["tronque"]
+    req = urllib.request.Request(base + "/api/fichiers?nom=photo.png", data=b"x", method="POST")
+    with pytest.raises(urllib.error.HTTPError) as erreur:
+        urllib.request.urlopen(req)
+    assert "format non pris en charge" in json.load(erreur.value)["erreur"]
+
+    async def actions(ws, recus, attendre):
+        await ws.send(json.dumps({"type": "texte", "contenu": "", "fichiers": [piece["id"]]}))
+        await attendre(lambda m: m.get("type") == "fin")
+
+    recus, _ = asyncio.run(discuter(env["port"], "conv-fichier", "assistant-du-quotidien", actions))
+    flux = [c for c in env["journal"] if c.get("stream") and c.get("max_tokens") != 1]
+    envoye = flux[-1]["messages"][-1]["content"]
+    assert "=== FICHIER JOINT : rapport.pdf ===" in envoye and "42 k" in envoye
+    conv = env["etat"].conversations.charger("conv-fichier")
+    assert conv.titre == "rapport.pdf" and conv.messages[0]["fichiers"][0]["nom"] == "rapport.pdf"
+    fin = next(m for m in recus if m.get("type") == "fin")
+    assert fin["index"] == 1
+    # Export Word : une réponse, puis toute la conversation.
+    with urllib.request.urlopen(base + "/api/conversations/conv-fichier/word?message=1") as r:
+        assert r.headers["Content-Type"].startswith("application/vnd.openxmlformats")
+        assert r.headers["Content-Disposition"] == 'attachment; filename="rapport.pdf.docx"'
+        assert r.read()[:2] == b"PK"
+    with urllib.request.urlopen(base + "/api/conversations/conv-fichier/word") as r:
+        assert r.read()[:2] == b"PK"
+
+
+def wav_reunion(secondes_parole=(3.0, 2.0), taux=48000) -> bytes:
+    """Un faux enregistrement de réunion : de la « parole » séparée par des silences."""
+    import io
+    import wave
+
+    morceaux = [np.zeros(taux, np.float32)]
+    for s in secondes_parole:
+        morceaux += [ton(s, taux), np.zeros(int(1.5 * taux), np.float32)]
+    signal = np.concatenate(morceaux)
+    sortie = io.BytesIO()
+    with wave.open(sortie, "wb") as w:
+        w.setnchannels(1), w.setsampwidth(2), w.setframerate(taux)
+        w.writeframes((signal * 32767).astype("<i2").tobytes())
+    return sortie.getvalue()
+
+
+def attendre_reunion(base, ident, delai=60):
+    import urllib.request
+
+    fin = time.monotonic() + delai
+    while time.monotonic() < fin:
+        with urllib.request.urlopen(f"{base}/api/reunions/{ident}") as r:
+            etat = json.load(r)
+        if etat["etape"] in ("termine", "erreur"):
+            return etat
+        time.sleep(0.2)
+    raise AssertionError(f"réunion non terminée : {etat}")
+
+
+def test_decoder_et_decouper_une_reunion():
+    from assistant.reunion import decoder_audio, decouper_en_parties, horodatage
+
+    audio = decoder_audio(wav_reunion())
+    assert abs(len(audio) / 16000 - 9.0) < 0.1  # rééchantillonné en 16 kHz mono
+    assert horodatage(75) == "01:15" and horodatage(3725) == "1:02:05"
+    parties = decouper_en_parties(["a" * 50] * 10, maximum=120)
+    assert len(parties) == 5
+
+
+def test_compte_rendu_depuis_un_fichier_audio(environnement):
+    import urllib.request
+
+    env = environnement
+    base = f"http://127.0.0.1:{env['port']}"
+    req = urllib.request.Request(base + "/api/reunions?nom=reunion.wav&assistant=coach-d-ecriture",
+                                 data=wav_reunion(), method="POST")
+    with urllib.request.urlopen(req) as r:
+        ident = json.load(r)["id"]
+    etat = attendre_reunion(base, ident)
+    assert etat["etape"] == "termine", etat
+    assert etat["total"] == 1  # deux phrases courtes : un seul morceau à retranscrire
+    conv = env["etat"].conversations.charger(etat["conversation"])
+    assert conv.assistant == "coach-d-ecriture" and conv.titre.startswith("Réunion du ")
+    assert conv.messages[0]["fichiers"][0]["nom"] == "Transcription de la réunion"
+    assert "Je voudrais un résumé" in conv.messages[0]["fichiers"][0]["texte"]
+    compte_rendu = conv.messages[1]["texte"]
+    assert compte_rendu.startswith("# Compte rendu") and "Commander du pain" in compte_rendu
+    transcriptions = list((env["tmp"] / "reunions").glob("*_transcription.txt"))
+    assert len(transcriptions) == 1 and "[00:0" in transcriptions[0].read_text(encoding="utf-8")
+
+
+def test_compte_rendu_d_un_enregistrement_en_direct(environnement):
+    import urllib.request
+
+    import websockets
+
+    env = environnement
+    base = f"http://127.0.0.1:{env['port']}"
+
+    async def enregistrer():
+        async with websockets.connect(f"ws://127.0.0.1:{env['port']}/ws-reunion?assistant=") as ws:
+            ident = json.loads(await ws.recv())["id"]
+            signal = np.concatenate([ton(2.0), np.zeros(16000, np.float32), ton(1.0)])
+            for i in range(0, len(signal), 1600):
+                await ws.send(moteurs.float_vers_pcm16(signal[i:i + 1600]))
+            await ws.send(json.dumps({"type": "fin"}))
+            return ident
+
+    ident = asyncio.run(enregistrer())
+    etat = attendre_reunion(base, ident)
+    assert etat["etape"] == "termine", etat
+    conv = env["etat"].conversations.charger(etat["conversation"])
+    assert conv.assistant == "assistant-du-quotidien" and "Commander du pain" in conv.messages[1]["texte"]

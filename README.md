@@ -8,6 +8,10 @@ Une page comme ChatGPT ou Claude, mais **qui tourne entièrement sur votre ordin
   son ton, ce qu'il doit faire), une voix, et si vous voulez, un dossier de documents qu'il
   peut consulter (vos notes, vos cours…). Deux exemples sont fournis : *Assistant du
   quotidien* et *Coach d'écriture*.
+- **Joignez des documents** (PDF, Word, texte) : « résume ce rapport », « réponds à ce mail »…
+  Et récupérez les réponses : **copier** en un clic, ou **enregistrer en Word**.
+- **Comptes rendus de réunion** : enregistrez une réunion (ou importez un enregistrement) ;
+  l'assistant la retranscrit et rédige le compte rendu (décisions, actions, questions en suspens).
 - **Vos conversations sont gardées** sur votre ordinateur : vous les retrouvez dans la colonne
   de gauche, pour les reprendre plus tard.
 - **Gratuit et 100 % local** : aucun abonnement, rien n'est envoyé sur internet (la connexion
@@ -87,6 +91,51 @@ le site Hugging Face :
   conversation commence avec lui.
 - **Retrouver une conversation** : elles sont classées par date dans la colonne de gauche.
   Au survol, le crayon la renomme et la poubelle la supprime.
+
+## Joindre un document
+
+Cliquez sur le **trombone** à gauche de la zone de saisie, ou **glissez-déposez** vos fichiers
+dans la page. Formats acceptés : **PDF**, **Word (.docx)** et texte (.txt, .md, .csv…). Écrivez
+ensuite votre demande (« résume ce document », « quelles sont les dates importantes ? »,
+« améliore ce mail »…) et envoyez.
+
+- Le document est lu **sur votre ordinateur**. Seul son texte est gardé, dans la conversation :
+  vous pouvez continuer à poser des questions dessus.
+- Un document long (au-delà d'une dizaine de pages) n'est lu qu'en partie : son début. Le
+  trombone l'indique (« long : début seulement »). Pour un long rapport, joignez plutôt le
+  passage qui vous intéresse.
+- Un PDF **scanné** (une image de papier) ne contient pas de texte : il ne peut pas être lu.
+- Un fichier Word ancien (.doc) : ouvrez-le dans Word et enregistrez-le en .docx.
+
+## Copier une réponse, l'enregistrer en Word
+
+Sous chaque réponse : **Copier** (pour la coller dans un mail, par exemple) et **Word** (un
+document Word est enregistré dans votre dossier Téléchargements). En haut à droite,
+**Exporter en Word** enregistre toute la conversation.
+
+## Compte rendu de réunion
+
+Cliquez sur **Compte rendu de réunion**, en haut de la colonne de gauche :
+
+- **Enregistrer** : posez l'ordinateur au milieu de la table et lancez l'enregistrement. À la
+  fin, cliquez sur **Terminer et rédiger le compte rendu**. La transcription avance déjà pendant
+  la réunion.
+- **Importer un fichier audio** : un enregistrement déjà fait, par exemple avec un téléphone
+  (mp3, m4a, wav, ogg…).
+
+L'assistant retranscrit la réunion, puis rédige le compte rendu : **résumé, points abordés,
+décisions, actions à mener (qui, quoi, quand), questions en suspens**. Le compte rendu s'ouvre
+comme une conversation : vous pouvez poser des questions sur la réunion (« qui doit faire
+quoi ? ») et l'exporter en Word. La transcription complète est aussi gardée en texte dans
+`C:\Users\VotreNom\MonAssistant\reunions`. L'enregistrement sonore, lui, n'est pas gardé.
+
+À savoir :
+- **Le temps** : sur un simple processeur, comptez souvent entre un tiers et la moitié de la
+  durée de la réunion pour la transcription, plus une à deux minutes pour la rédaction. Pendant
+  ce temps, l'assistant ne répond pas aux conversations.
+- **La qualité** du compte rendu dépend surtout de celle de l'enregistrement : un micro proche,
+  peu de bruit, une personne qui parle à la fois. Relisez toujours le compte rendu.
+- Les intervenants ne sont **pas reconnus** : un nom n'apparaît que s'il est prononcé.
 
 ## Créer ou modifier un assistant
 
@@ -168,6 +217,8 @@ assistant/
   profils.py          lecture et écriture des fichiers d'assistants
   conversations.py    l'historique des conversations
   documents.py        les documents d'un assistant (lecture seule)
+  fichiers.py         lecture des fichiers joints (PDF, Word, texte) et export Word
+  reunion.py          comptes rendus de réunion (transcription par morceaux, puis rédaction)
   raccourci.ps1       création du raccourci sur le Bureau
   cerveau.py          Gemma 4 dans llama.cpp
   moteurs.py          la voix (Phonon) et le détecteur de parole (Silero)

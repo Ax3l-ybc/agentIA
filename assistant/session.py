@@ -2,7 +2,10 @@
 
 Protocole :
 - page → serveur :
-  {"type": "texte", "contenu": "…", "lire": true|false}  message écrit (lire : réponse lue à voix haute)
+  {"type": "texte", "contenu": "…", "lire": true|false, "fichiers": [id…]}
+                                                         message écrit (lire : réponse lue à voix haute ;
+                                                         fichiers : pièces jointes envoyées avant par
+                                                         POST /api/fichiers)
   {"type": "voix", "active": true|false}                 conversation à la voix (micro)
   binaire : le micro (PCM 16 bits mono, 16 kHz), quand la voix est active
   {"type": "stop"}                                       interrompre la réponse en cours
@@ -42,6 +45,7 @@ import numpy as np
 from .cerveau import wav_16k
 from .conversations import Conversation
 from .documents import Documents
+from .fichiers import bloc_pour_le_modele
 from .moteurs import float_vers_pcm16, pcm16_vers_float
 from .phrases import DecoupeurPhrases
 from .profils import Profil
@@ -103,9 +107,17 @@ def construire_systeme(profil: Profil, documents: Documents | None) -> str:
     return "\n\n".join(morceaux)
 
 
+def contenu_pour_le_modele(texte: str, fichiers: list[dict] | None) -> str:
+    """Le message tel qu'il est donné au modèle : le texte, puis celui des fichiers joints."""
+    if not fichiers:
+        return texte
+    return (texte or "Voici le document joint.") + "\n\n" + bloc_pour_le_modele(fichiers)
+
+
 def historique_depuis(conv: Conversation) -> list[dict]:
     roles = {"utilisateur": "user", "assistant": "assistant"}
-    return [{"role": roles[m["role"]], "content": m["texte"] or "(message vocal inaudible)"}
+    return [{"role": roles[m["role"]],
+             "content": contenu_pour_le_modele(m["texte"], m.get("fichiers")) or "(message vocal inaudible)"}
             for m in conv.messages if m.get("role") in roles]
 
 
@@ -199,7 +211,7 @@ class Session:
     # ------------------------------------------------------------ une réponse
 
     async def repondre(self, contenu: str | None = None, audio: np.ndarray | None = None,
-                       lire: bool = False, fin_phrase: float | None = None,
+                       lire: bool = False, fichiers: list[dict] | None = None, fin_phrase: float | None = None,
                        ids: list[int] | None = None, feu_vert: asyncio.Event | None = None,
                        arret: threading.Event | None = None) -> str:
         """Répond à un message écrit (`contenu`) ou à une phrase dite (`audio`).
@@ -214,14 +226,14 @@ class Session:
             wav = wav_16k(audio)
             actuel = self.cerveau.message_vocal(wav, CONSIGNE_VOCALE)
         else:
-            actuel = {"role": "user", "content": contenu}
+            actuel = {"role": "user", "content": contenu_pour_le_modele(contenu, fichiers)}
         self._faire_de_la_place(len(audio) / 16000 if vocal else 0.0)
         messages = [{"role": "system", "content": self.systeme}, *self.historique, actuel]
         debut = time.monotonic()
         if feu_vert is None:
             await self.envoyer({"type": "etat", "etat": "reflexion"})
         if not vocal:  # le message écrit est gardé tout de suite (titre de la conversation)
-            self._garder_utilisateur(contenu, "texte")
+            self._garder_utilisateur(contenu, "texte", fichiers)
 
         texte_total, interrompue = "", False
         etat = {"premier": True, "commence": False, "code": False}
@@ -261,7 +273,7 @@ class Session:
         texte_total = texte_total.strip()
         if interrompue:
             texte_total = (texte_total + " …").strip() if texte_total else "(réponse interrompue)"
-        self.historique.append({"role": "user", "content": contenu if not vocal else "(message vocal)"})
+        self.historique.append({"role": "user", "content": actuel["content"] if not vocal else "(message vocal)"})
         message_histo = self.historique[-1]
         self.historique.append({"role": "assistant", "content": texte_total or "…"})
         if vocal:
@@ -272,12 +284,17 @@ class Session:
             self._lancer_transcription(wav, message_histo, message, numero)
         self.conv.ajouter("assistant", texte_total, "voix" if vocal else "texte")
         self.app.conversations.enregistrer(self.conv)
-        await self.envoyer({"type": "fin", "texte": texte_total, "interrompue": interrompue})
+        await self.envoyer({"type": "fin", "texte": texte_total, "interrompue": interrompue,
+                            "index": len(self.conv.messages) - 1})
         return texte_total
 
-    def _garder_utilisateur(self, texte: str, mode: str) -> dict:
+    def _garder_utilisateur(self, texte: str, mode: str, fichiers: list[dict] | None = None) -> dict:
         titre = self.conv.titre
-        message = self.conv.ajouter("utilisateur", texte, mode)
+        # Un fichier envoyé sans texte donne son nom comme titre à la conversation.
+        message = self.conv.ajouter("utilisateur", texte or (fichiers[0]["nom"] if fichiers else ""), mode)
+        if fichiers:
+            message["texte"] = texte
+            message["fichiers"] = fichiers
         if self.conv.titre != titre:
             asyncio.get_running_loop().create_task(self.envoyer({"type": "titre", "titre": self.conv.titre}))
         self.app.conversations.enregistrer(self.conv)
@@ -444,9 +461,10 @@ class Session:
             genre, donnee, fin_phrase, numero = await self.file.get()
             if genre == "texte":
                 self.abandonner_anticipe()
-                contenu, lire = donnee
+                contenu, lire, fichiers = donnee
                 arret = threading.Event()
-                await self._executer(self.repondre(contenu=contenu, lire=lire, arret=arret), arret)
+                await self._executer(self.repondre(contenu=contenu, lire=lire, fichiers=fichiers, arret=arret),
+                                     arret)
                 await self.fin_de_parole()
             elif genre == "provisoire":
                 # La personne s'est peut-être arrêtée de parler : on prépare déjà la réponse.
@@ -514,9 +532,11 @@ class Session:
             except json.JSONDecodeError:
                 continue
             genre = donnees.get("type")
-            if genre == "texte" and str(donnees.get("contenu", "")).strip():
-                self.file.put_nowait(("texte", (str(donnees["contenu"]).strip(), bool(donnees.get("lire"))),
-                                      None, None))
+            if genre == "texte":
+                fichiers = self.app.prendre_fichiers(donnees.get("fichiers") or [])
+                contenu = str(donnees.get("contenu", "")).strip()
+                if contenu or fichiers:
+                    self.file.put_nowait(("texte", (contenu, bool(donnees.get("lire")), fichiers), None, None))
             elif genre == "voix":
                 self.voix_active = bool(donnees.get("active"))
                 self.decoupeur.reinitialiser()

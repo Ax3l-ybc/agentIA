@@ -71,12 +71,10 @@ def main() -> int:
 
 def charger_voix(reglages, log):
     """La voix Phonon, ou None (l'assistant marche alors à l'écrit seulement)."""
-    from .moteurs import DetecteurSilero, MoteurVoix
+    from .moteurs import MoteurVoix
 
     try:
-        voix = MoteurVoix(reglages.voix_modele, "", reglages.voix_vitesse)
-        DetecteurSilero()  # vérifie que le détecteur de parole se charge
-        return voix
+        return MoteurVoix(reglages.voix_modele, "", reglages.voix_vitesse)
     except Exception as exc:  # noqa: BLE001
         texte = str(exc)
         if any(m in texte for m in ("401", "403", "gated", "Gated", "token", "Unauthorized", "restricted")):
@@ -88,6 +86,11 @@ def charger_voix(reglages, log):
         else:
             log.warning("La voix n'a pas pu être chargée (%s) : l'assistant marche à l'écrit.", texte)
         return None
+
+
+def detecteur_simple():
+    """Détection de parole simplifiée (volume du son), si Silero ne se charge pas."""
+    return lambda bloc: 0.9 if float(abs(bloc).mean()) > 0.01 else 0.1
 
 
 class SansVoix:
@@ -107,11 +110,14 @@ def lancer_application(reglages, serveur, log) -> int:
     from .moteurs import DetecteurSilero
 
     log.info("Étape 2/3 : la voix (Phonon).")
-    voix = charger_voix(reglages, log)
-    if voix is None:  # sans voix, pas besoin du détecteur de parole
-        voix, detecteur = SansVoix(), (lambda: (lambda bloc: 0.0))
-    else:
+    voix = charger_voix(reglages, log) or SansVoix()
+    # Le détecteur de parole sert à la voix et aux comptes rendus de réunion.
+    try:
+        DetecteurSilero()
         detecteur = DetecteurSilero
+    except Exception as exc:  # noqa: BLE001
+        log.warning("Détecteur de parole indisponible (%s) : détection simplifiée.", exc)
+        detecteur = detecteur_simple
     etat = Application(reglages, serveur.cerveau, voix, detecteur, serveur.reparer)
     noms = ", ".join(p.nom for p in etat.profils.lister())
     log.info("Assistants disponibles : %s (dossier %s).", noms, reglages.dossier_assistants)

@@ -49,6 +49,14 @@ class DecoupeurPhrases:
         garder = self.blocs[:len(self.blocs) - silencieux] if silencieux > 0 else self.blocs
         return np.concatenate(garder)
 
+    def vider(self) -> list[np.ndarray]:
+        """Fin de l'enregistrement : la phrase en cours, s'il y en a une."""
+        phrase = []
+        if self.parle and self.blocs and self.parole_s >= self.min_parole_s:
+            phrase = [self._sans_silence()]
+        self.blocs, self.parle, self.provisoire = [], False, False
+        return phrase
+
     def ajouter(self, audio_16k: np.ndarray) -> list[np.ndarray]:
         """Ajoute du son du micro. Renvoie les phrases terminées (audio 16 kHz)."""
         self.reste = np.concatenate([self.reste, audio_16k.astype(np.float32)])
