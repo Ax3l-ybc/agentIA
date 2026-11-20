@@ -12,7 +12,7 @@ from typing import Iterator
 
 import numpy as np
 
-log = logging.getLogger("agent.moteurs")
+log = logging.getLogger("assistant.moteurs")
 
 
 class DetecteurSilero:
@@ -62,12 +62,22 @@ class MoteurVoix:
         if self.voix:
             log.info("Voix choisie : %s", self.voix)
 
-    def parler(self, texte: str, arret: threading.Event) -> Iterator[np.ndarray]:
-        """Produit l'audio (float32, à self.taux Hz) morceau par morceau."""
+    @property
+    def voices(self) -> list[str]:
+        return list(self.tts.voices)
+
+    def parler(self, texte: str, arret: threading.Event, voix: str | None = None) -> Iterator[np.ndarray]:
+        """Produit l'audio (float32, à self.taux Hz) morceau par morceau.
+
+        `voix` : nom d'une voix Phonon (celle de l'assistant), sinon la voix par défaut."""
+        if voix and voix not in self.tts.voices:
+            log.warning("Voix « %s » inconnue : voix par défaut. Voix disponibles : %s",
+                        voix, ", ".join(self.tts.voices))
+            voix = None
         with self.verrou:
             if arret.is_set():
                 return
-            with self.tts.stream(texte, voice=self.voix) as flux:
+            with self.tts.stream(texte, voice=voix or self.voix) as flux:
                 for morceau in flux:
                     if arret.is_set():
                         break
@@ -79,7 +89,9 @@ class MoteurVoixSimulation:
 
     taux = 24000
 
-    def parler(self, texte: str, arret: threading.Event) -> Iterator[np.ndarray]:
+    voices = ["Hélène", "Jules"]
+
+    def parler(self, texte: str, arret: threading.Event, voix: str | None = None) -> Iterator[np.ndarray]:
         duree = 0.05 * max(1, len(texte.split()))
         t = np.arange(int(duree * self.taux)) / self.taux
         signal = (0.1 * np.sin(2 * np.pi * 220 * t)).astype(np.float32)

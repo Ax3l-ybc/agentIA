@@ -1,0 +1,827 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Mon Assistant</title>
+<style>
+:root {
+    --fond: #faf9f6;
+    --barre: #f1efe9;
+    --surface: #ffffff;
+    --survol: #e8e5dd;
+    --encre: #1f1e1c;
+    --encre-douce: #6b6862;
+    --bord: #e2ded4;
+    --accent: #2e6b5e;
+    --accent-texte: #ffffff;
+    --bulle: #ece9e1;
+    --code: #f3f1ec;
+    --danger: #b3261e;
+    --actif: #c2410c;
+    --ombre: 0 1px 2px rgba(0,0,0,.05), 0 4px 16px rgba(0,0,0,.06);
+}
+@media (prefers-color-scheme: dark) {
+    :root {
+        --fond: #1d1d1b;
+        --barre: #161615;
+        --surface: #262624;
+        --survol: #2f2f2c;
+        --encre: #ecebe7;
+        --encre-douce: #a29f97;
+        --bord: #3a3936;
+        --accent: #6fbfa9;
+        --accent-texte: #10201b;
+        --bulle: #31312e;
+        --code: #2b2b28;
+        --danger: #f2867e;
+        --actif: #fb923c;
+        --ombre: 0 1px 2px rgba(0,0,0,.3), 0 4px 16px rgba(0,0,0,.3);
+    }
+}
+* { box-sizing: border-box; }
+html, body { height: 100%; margin: 0; }
+body {
+    font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
+    background: var(--fond); color: var(--encre);
+    display: flex; overflow: hidden; font-size: 15px;
+}
+button { font: inherit; color: inherit; cursor: pointer; }
+input, textarea, select { font: inherit; color: inherit; }
+svg { width: 18px; height: 18px; flex: none; }
+
+/* ------------------------------------------------------------ barre latérale */
+#barre {
+    width: 272px; flex: none; background: var(--barre); border-right: 1px solid var(--bord);
+    display: flex; flex-direction: column; height: 100%;
+}
+.marque { display: flex; align-items: center; gap: .6rem; padding: 1rem 1rem .5rem; font-weight: 600; font-size: 1.05rem; }
+.logo { width: 28px; height: 28px; border-radius: 8px; background: var(--accent); color: var(--accent-texte);
+        display: grid; place-items: center; font-size: .9rem; font-weight: 700; }
+.bouton-plein {
+    display: flex; align-items: center; gap: .5rem; margin: .5rem .75rem; padding: .6rem .8rem;
+    border-radius: 10px; border: 1px solid var(--bord); background: var(--surface); font-weight: 500;
+}
+.bouton-plein:hover { background: var(--survol); }
+.defile { overflow-y: auto; flex: 1; padding: 0 .5rem 1rem; }
+.titre-section { font-size: .75rem; font-weight: 600; color: var(--encre-douce); text-transform: uppercase;
+                 letter-spacing: .04em; padding: 1rem .5rem .35rem; }
+.element {
+    display: flex; align-items: center; gap: .55rem; padding: .5rem .55rem; border-radius: 8px;
+    cursor: pointer; position: relative; min-height: 36px;
+}
+.element:hover, .element.choisi { background: var(--survol); }
+.element .nom { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.element .actions { display: none; gap: 2px; }
+.element:hover .actions, .element.choisi .actions { display: flex; }
+.mini { border: none; background: none; padding: 4px; border-radius: 6px; color: var(--encre-douce); display: grid; }
+.mini:hover { background: var(--bord); color: var(--encre); }
+.pastille { width: 22px; height: 22px; border-radius: 6px; flex: none; display: grid; place-items: center;
+            font-size: .72rem; font-weight: 700; color: #fff; }
+.pied-barre { padding: .75rem 1rem; font-size: .78rem; color: var(--encre-douce); border-top: 1px solid var(--bord); line-height: 1.4; }
+
+/* ------------------------------------------------------------ zone principale */
+#principal { flex: 1; display: flex; flex-direction: column; height: 100%; min-width: 0; }
+.entete {
+    display: flex; align-items: center; gap: .6rem; padding: .7rem 1rem; border-bottom: 1px solid transparent;
+    min-height: 54px;
+}
+.entete .titre { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.entete .sous-titre { color: var(--encre-douce); font-size: .85rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#ouvrirBarre { display: none; }
+#fil { flex: 1; overflow-y: auto; scroll-behavior: smooth; }
+.colonne { max-width: 760px; margin: 0 auto; padding: 1rem 1.25rem 2rem; }
+
+.accueil { text-align: center; padding: 14vh 1rem 2rem; }
+.accueil .pastille { width: 52px; height: 52px; font-size: 1.4rem; border-radius: 14px; margin: 0 auto 1rem; }
+.accueil h1 { font-family: Georgia, "Times New Roman", serif; font-weight: normal; font-size: 1.9rem; margin: 0 0 .5rem; }
+.accueil p { color: var(--encre-douce); margin: 0 auto; max-width: 520px; line-height: 1.5; }
+
+.message { margin: 1.4rem 0; line-height: 1.6; }
+.message.utilisateur { display: flex; justify-content: flex-end; }
+.message.utilisateur .contenu {
+    background: var(--bulle); padding: .65rem 1rem; border-radius: 18px; max-width: 80%;
+    white-space: pre-wrap; word-wrap: break-word;
+}
+.message.utilisateur .contenu.attente { color: var(--encre-douce); font-style: italic; }
+.voix-icone { color: var(--encre-douce); margin-right: .35rem; vertical-align: -3px; }
+.message.assistant { display: flex; gap: .8rem; }
+.message.assistant .pastille { margin-top: .2rem; }
+.message.assistant .contenu { flex: 1; min-width: 0; word-wrap: break-word; }
+.contenu > :first-child { margin-top: 0; }
+.contenu > :last-child { margin-bottom: 0; }
+.contenu p { margin: 0 0 .8rem; }
+.contenu h1, .contenu h2, .contenu h3 { margin: 1.2rem 0 .5rem; line-height: 1.3; }
+.contenu h1 { font-size: 1.35rem; } .contenu h2 { font-size: 1.2rem; } .contenu h3 { font-size: 1.05rem; }
+.contenu ul, .contenu ol { margin: 0 0 .8rem; padding-left: 1.4rem; }
+.contenu li { margin: .2rem 0; }
+.contenu code { background: var(--code); padding: .1rem .35rem; border-radius: 5px; font-size: .9em;
+                font-family: Consolas, "Cascadia Mono", monospace; }
+.contenu pre { background: var(--code); padding: .8rem 1rem; border-radius: 10px; overflow-x: auto; margin: 0 0 .8rem; }
+.contenu pre code { background: none; padding: 0; }
+.contenu blockquote { border-left: 3px solid var(--bord); margin: 0 0 .8rem; padding-left: .9rem; color: var(--encre-douce); }
+.contenu a { color: var(--accent); }
+.contenu hr { border: none; border-top: 1px solid var(--bord); margin: 1rem 0; }
+.curseur::after { content: "▍"; animation: clignote 1s steps(1) infinite; color: var(--encre-douce); }
+@keyframes clignote { 50% { opacity: 0; } }
+.note { color: var(--encre-douce); font-size: .85rem; margin: .4rem 0 .4rem 2.6rem; font-style: italic; }
+.reflexion { display: inline-flex; gap: 4px; padding: .5rem 0; }
+.reflexion span { width: 7px; height: 7px; border-radius: 50%; background: var(--encre-douce); animation: point 1.2s infinite; }
+.reflexion span:nth-child(2) { animation-delay: .2s; } .reflexion span:nth-child(3) { animation-delay: .4s; }
+@keyframes point { 0%, 80%, 100% { opacity: .25; } 40% { opacity: 1; } }
+
+/* ------------------------------------------------------------ zone de saisie */
+.saisie { padding: 0 1.25rem 1rem; }
+.cadre {
+    max-width: 760px; margin: 0 auto; background: var(--surface); border: 1px solid var(--bord);
+    border-radius: 22px; box-shadow: var(--ombre); padding: .55rem .6rem .5rem 1rem;
+}
+.cadre:focus-within { border-color: var(--encre-douce); }
+#zoneTexte {
+    width: 100%; border: none; outline: none; background: transparent; resize: none;
+    max-height: 220px; min-height: 26px; line-height: 1.5; padding: .35rem 0;
+}
+.outils { display: flex; align-items: center; gap: .4rem; }
+.outils .espace { flex: 1; }
+.rond {
+    width: 36px; height: 36px; border-radius: 50%; border: 1px solid var(--bord); background: var(--surface);
+    display: grid; place-items: center; color: var(--encre-douce);
+}
+.rond:hover { background: var(--survol); color: var(--encre); }
+.rond.envoyer { background: var(--accent); color: var(--accent-texte); border-color: transparent; }
+.rond.envoyer:disabled { opacity: .35; cursor: default; }
+.rond.actif { background: var(--actif); color: #fff; border-color: transparent; animation: pulse 1.8s infinite; }
+@keyframes pulse { 0%, 100% { box-shadow: 0 0 0 0 rgba(194,65,12,.35); } 50% { box-shadow: 0 0 0 9px rgba(194,65,12,0); } }
+.interrupteur { display: flex; align-items: center; gap: .4rem; font-size: .82rem; color: var(--encre-douce);
+                padding: .3rem .55rem; border-radius: 999px; border: 1px solid transparent; background: none; }
+.interrupteur:hover { background: var(--survol); }
+.interrupteur.oui { color: var(--accent); border-color: var(--bord); }
+.etat-voix { font-size: .82rem; color: var(--encre-douce); }
+.etat-voix.ecoute { color: var(--actif); font-weight: 600; }
+.mention { text-align: center; font-size: .75rem; color: var(--encre-douce); margin-top: .5rem; }
+
+/* ------------------------------------------------------------ fenêtre de réglage */
+.voile { position: fixed; inset: 0; background: rgba(0,0,0,.4); display: none; align-items: center; justify-content: center; z-index: 20; padding: 1rem; }
+.voile.visible { display: flex; }
+.fenetre { background: var(--surface); border-radius: 16px; width: 100%; max-width: 640px; max-height: 92vh;
+           display: flex; flex-direction: column; box-shadow: 0 20px 60px rgba(0,0,0,.3); }
+.fenetre header { padding: 1.1rem 1.4rem .5rem; font-weight: 600; font-size: 1.1rem; }
+.fenetre .corps { padding: .5rem 1.4rem 1rem; overflow-y: auto; }
+.fenetre footer { padding: .9rem 1.4rem; display: flex; gap: .5rem; border-top: 1px solid var(--bord); }
+.fenetre footer .espace { flex: 1; }
+.champ { display: block; margin-bottom: .9rem; }
+.champ > span { display: block; font-size: .85rem; font-weight: 600; margin-bottom: .3rem; }
+.champ small { display: block; color: var(--encre-douce); font-size: .78rem; margin-top: .25rem; line-height: 1.4; }
+.champ input, .champ textarea, .champ select {
+    width: 100%; padding: .55rem .7rem; border-radius: 9px; border: 1px solid var(--bord); background: var(--fond);
+}
+.champ textarea { min-height: 220px; resize: vertical; line-height: 1.5; }
+.bouton { padding: .55rem 1rem; border-radius: 9px; border: 1px solid var(--bord); background: var(--surface); font-weight: 500; }
+.bouton:hover { background: var(--survol); }
+.bouton.principal { background: var(--accent); color: var(--accent-texte); border-color: transparent; }
+.bouton.danger { color: var(--danger); }
+.erreur-form { color: var(--danger); font-size: .85rem; min-height: 1.2em; }
+
+/* ------------------------------------------------------------ petits écrans */
+@media (max-width: 760px) {
+    #barre { position: fixed; z-index: 10; left: 0; top: 0; transform: translateX(-100%); transition: transform .2s; box-shadow: var(--ombre); }
+    #barre.ouverte { transform: none; }
+    #ouvrirBarre { display: grid; }
+    .colonne, .saisie { padding-left: 1rem; padding-right: 1rem; }
+    .message.utilisateur .contenu { max-width: 92%; }
+}
+</style>
+</head>
+<body>
+<aside id="barre">
+    <div class="marque"><div class="logo">A</div>Mon Assistant</div>
+    <button class="bouton-plein" id="nouvelle">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
+        Nouvelle conversation
+    </button>
+    <div class="defile">
+        <div class="titre-section">Assistants</div>
+        <div id="listeAssistants"></div>
+        <div class="element" id="creerAssistant">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
+            <span class="nom">Créer un assistant</span>
+        </div>
+        <div id="listeConversations"></div>
+    </div>
+    <div class="pied-barre">Tout fonctionne sur cet ordinateur, sans internet.<br><span id="infoModele"></span></div>
+</aside>
+
+<main id="principal">
+    <div class="entete">
+        <button class="mini" id="ouvrirBarre" aria-label="Menu">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
+        </button>
+        <div style="min-width:0">
+            <div class="titre" id="titreConversation">Nouvelle conversation</div>
+            <div class="sous-titre" id="sousTitre"></div>
+        </div>
+    </div>
+    <div id="fil"><div class="colonne" id="colonne"></div></div>
+    <div class="saisie">
+        <div class="cadre">
+            <textarea id="zoneTexte" rows="1" placeholder="Écrivez votre message…"></textarea>
+            <div class="outils">
+                <button class="interrupteur" id="lire" title="Lire les réponses écrites à voix haute">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 5 6 9H2v6h4l5 4V5z"/><path d="M15.5 8.5a5 5 0 0 1 0 7"/></svg>
+                    <span>Lire à voix haute</span>
+                </button>
+                <span class="etat-voix" id="etatVoix"></span>
+                <span class="espace"></span>
+                <button class="rond" id="micro" title="Parler à l'assistant (conversation à la voix)">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10a7 7 0 0 0 14 0M12 17v5"/></svg>
+                </button>
+                <button class="rond envoyer" id="envoyer" title="Envoyer" disabled>
+                    <svg id="iconeEnvoyer" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5M5 12l7-7 7 7"/></svg>
+                    <svg id="iconeStop" viewBox="0 0 24 24" fill="currentColor" style="display:none"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>
+                </button>
+            </div>
+        </div>
+        <div class="mention">L'assistant peut se tromper : vérifiez les informations importantes.</div>
+    </div>
+</main>
+
+<div class="voile" id="voile">
+    <form class="fenetre" id="formAssistant" autocomplete="off">
+        <header id="titreForm">Modifier l'assistant</header>
+        <div class="corps">
+            <label class="champ"><span>Nom</span><input id="fNom" required maxlength="60"></label>
+            <label class="champ"><span>Description</span><input id="fDescription" maxlength="160">
+                <small>Une phrase, affichée sous le nom.</small></label>
+            <label class="champ"><span>Consignes</span><textarea id="fConsignes" required></textarea>
+                <small>Décrivez son rôle, son ton (tutoiement ou vouvoiement), ce qu'il doit faire et éviter.
+                Elles s'appliquent à chaque nouvelle conversation.</small></label>
+            <label class="champ"><span>Voix</span><select id="fVoix"></select></label>
+            <label class="champ"><span>Dossier de documents (facultatif)</span>
+                <input id="fDossier" placeholder="C:\Users\VotreNom\Documents\MesNotes">
+                <small>Un dossier de fichiers .md ou .txt que l'assistant peut consulter pour répondre.
+                Il le lit sans jamais rien y modifier.</small></label>
+            <div class="erreur-form" id="erreurForm"></div>
+        </div>
+        <footer>
+            <button type="button" class="bouton danger" id="supprimerAssistant">Supprimer</button>
+            <span class="espace"></span>
+            <button type="button" class="bouton" id="annulerForm">Annuler</button>
+            <button type="submit" class="bouton principal">Enregistrer</button>
+        </footer>
+    </form>
+</div>
+
+<script>
+"use strict";
+// ===========================================================================
+// Petits outils
+// ===========================================================================
+const $ = (id) => document.getElementById(id);
+const COULEURS = ["#2e6b5e", "#7c4d9e", "#b5542f", "#2f5fa7", "#8a6d1d", "#a23b5f", "#3d7a2f", "#5b5b9e"];
+function couleur(texte) { let h = 0; for (const c of texte) h = (h * 31 + c.charCodeAt(0)) >>> 0; return COULEURS[h % COULEURS.length]; }
+function pastille(nom, classe = "") {
+    const p = document.createElement("div");
+    p.className = "pastille " + classe;
+    p.style.background = couleur(nom || "?");
+    p.textContent = (nom || "?").trim().charAt(0).toUpperCase();
+    return p;
+}
+function echapper(t) { return t.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;"); }
+async function api(chemin, options = {}) {
+    const r = await fetch(chemin, { headers: { "Content-Type": "application/json" }, ...options });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(d.erreur || "Erreur " + r.status);
+    return d;
+}
+
+// ===========================================================================
+// Markdown (simple et sûr : le texte est échappé avant la mise en forme)
+// ===========================================================================
+function enLigne(t) {
+    t = echapper(t);
+    const codes = [];
+    t = t.replace(/`([^`]+)`/g, (_, c) => { codes.push(c); return `\u0000${codes.length - 1}\u0000`; });
+    t = t.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
+         .replace(/(^|[^*])\*([^*\s][^*]*)\*/g, "$1<em>$2</em>")
+         .replace(/\[([^\]]+)\]\((https?:[^)\s]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>');
+    return t.replace(/\u0000(\d+)\u0000/g, (_, i) => `<code>${codes[+i]}</code>`);
+}
+function markdown(source) {
+    const lignes = source.replace(/\r/g, "").split("\n");
+    let html = "", i = 0;
+    while (i < lignes.length) {
+        const l = lignes[i];
+        if (/^```/.test(l)) {
+            const code = []; i++;
+            while (i < lignes.length && !/^```/.test(lignes[i])) code.push(lignes[i++]);
+            i++;
+            html += `<pre><code>${echapper(code.join("\n"))}</code></pre>`;
+            continue;
+        }
+        const titre = l.match(/^(#{1,3})\s+(.*)/);
+        if (titre) { const n = titre[1].length; html += `<h${n}>${enLigne(titre[2])}</h${n}>`; i++; continue; }
+        if (/^\s*([-*_])\s*\1\s*\1[\s\-*_]*$/.test(l)) { html += "<hr>"; i++; continue; }
+        if (/^\s*[-*•]\s+/.test(l) || /^\s*\d+[.)]\s+/.test(l)) {
+            const ordonnee = /^\s*\d+[.)]\s+/.test(l), balise = ordonnee ? "ol" : "ul";
+            html += `<${balise}>`;
+            while (i < lignes.length && (/^\s*[-*•]\s+/.test(lignes[i]) || /^\s*\d+[.)]\s+/.test(lignes[i]))) {
+                html += `<li>${enLigne(lignes[i].replace(/^\s*([-*•]|\d+[.)])\s+/, ""))}</li>`; i++;
+            }
+            html += `</${balise}>`;
+            continue;
+        }
+        if (/^>\s?/.test(l)) {
+            const bloc = [];
+            while (i < lignes.length && /^>\s?/.test(lignes[i])) bloc.push(lignes[i++].replace(/^>\s?/, ""));
+            html += `<blockquote>${enLigne(bloc.join(" "))}</blockquote>`;
+            continue;
+        }
+        if (!l.trim()) { i++; continue; }
+        const para = [];
+        while (i < lignes.length && lignes[i].trim() && !/^(```|#{1,3}\s|>\s?|\s*[-*•]\s+|\s*\d+[.)]\s+)/.test(lignes[i])) para.push(lignes[i++]);
+        if (!para.length) para.push(lignes[i++]);
+        html += `<p>${para.map(enLigne).join("<br>")}</p>`;
+    }
+    return html;
+}
+
+// ===========================================================================
+// État de la page
+// ===========================================================================
+let assistants = [], conversations = [], infos = {};
+let conv = null;            // conversation affichée {id, assistant, titre, messages}
+let ws = null, genere = false, lireAVoixHaute = false;
+let reponse = null;         // {el, texte} : la réponse en cours d'écriture
+let attente = null;         // indicateur « réfléchit… »
+const bullesVoix = {};
+let contexteAudio = null, tauxVoix = 24000, prochaineLecture = 0, sourcesEnCours = [];
+let flux = null, capteur = null, voixActive = false;
+
+try { lireAVoixHaute = localStorage.getItem("lire") === "1"; } catch (e) {}
+
+const colonne = $("colonne"), fil = $("fil"), zone = $("zoneTexte");
+
+function assistantDe(id) { return assistants.find(a => a.id === id) || assistants[0]; }
+function defiler() { fil.scrollTop = fil.scrollHeight; }
+
+// ===========================================================================
+// Barre latérale
+// ===========================================================================
+function afficherAssistants() {
+    const liste = $("listeAssistants");
+    liste.innerHTML = "";
+    for (const a of assistants) {
+        const el = document.createElement("div");
+        el.className = "element" + (conv && conv.assistant === a.id && !conv.messages.length ? " choisi" : "");
+        el.title = a.description || a.nom;
+        el.append(pastille(a.nom));
+        const nom = document.createElement("span"); nom.className = "nom"; nom.textContent = a.nom; el.append(nom);
+        const actions = document.createElement("span"); actions.className = "actions";
+        const modifier = document.createElement("button"); modifier.className = "mini"; modifier.title = "Modifier l'assistant";
+        modifier.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/></svg>';
+        modifier.onclick = (e) => { e.stopPropagation(); ouvrirFormulaire(a); };
+        actions.append(modifier); el.append(actions);
+        el.onclick = () => nouvelleConversation(a.id);
+        liste.append(el);
+    }
+}
+
+function groupe(date) {
+    const d = new Date(date), aujourdhui = new Date(); aujourdhui.setHours(0, 0, 0, 0);
+    const jours = (aujourdhui - new Date(d.getFullYear(), d.getMonth(), d.getDate())) / 864e5;
+    if (jours <= 0) return "Aujourd'hui";
+    if (jours === 1) return "Hier";
+    if (jours < 7) return "7 derniers jours";
+    if (jours < 30) return "30 derniers jours";
+    return "Plus ancien";
+}
+
+function afficherConversations() {
+    const liste = $("listeConversations");
+    liste.innerHTML = "";
+    let groupeCourant = null;
+    for (const c of conversations) {
+        const g = groupe(c.modifie);
+        if (g !== groupeCourant) {
+            groupeCourant = g;
+            const t = document.createElement("div"); t.className = "titre-section"; t.textContent = g; liste.append(t);
+        }
+        const el = document.createElement("div");
+        el.className = "element" + (conv && conv.id === c.id ? " choisi" : "");
+        const nom = document.createElement("span"); nom.className = "nom"; nom.textContent = c.titre; el.append(nom);
+        el.title = `${c.titre} (${assistantDe(c.assistant)?.nom || c.assistant})`;
+        const actions = document.createElement("span"); actions.className = "actions";
+        const renommer = document.createElement("button"); renommer.className = "mini"; renommer.title = "Renommer";
+        renommer.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/></svg>';
+        renommer.onclick = async (e) => {
+            e.stopPropagation();
+            const titre = prompt("Nouveau titre :", c.titre);
+            if (!titre) return;
+            await api(`api/conversations/${c.id}`, { method: "PATCH", body: JSON.stringify({ titre }) });
+            if (conv && conv.id === c.id) { conv.titre = titre; $("titreConversation").textContent = titre; }
+            chargerConversations();
+        };
+        const supprimer = document.createElement("button"); supprimer.className = "mini"; supprimer.title = "Supprimer";
+        supprimer.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6"/></svg>';
+        supprimer.onclick = async (e) => {
+            e.stopPropagation();
+            if (!confirm(`Supprimer la conversation « ${c.titre} » ?`)) return;
+            await api(`api/conversations/${c.id}`, { method: "DELETE" });
+            if (conv && conv.id === c.id) nouvelleConversation(conv.assistant);
+            chargerConversations();
+        };
+        actions.append(renommer, supprimer); el.append(actions);
+        el.onclick = () => ouvrirConversation(c.id);
+        liste.append(el);
+    }
+}
+
+async function chargerAssistants() { assistants = await api("api/assistants"); afficherAssistants(); }
+async function chargerConversations() { conversations = await api("api/conversations"); afficherConversations(); }
+
+// ===========================================================================
+// Affichage de la conversation
+// ===========================================================================
+function afficherEntete() {
+    const a = assistantDe(conv.assistant);
+    $("titreConversation").textContent = conv.messages.length ? conv.titre : (a?.nom || "Nouvelle conversation");
+    $("sousTitre").textContent = conv.messages.length ? (a?.nom || "") : (a?.description || "");
+    document.title = conv.messages.length ? `${conv.titre} – Mon Assistant` : "Mon Assistant";
+}
+
+function afficherAccueil() {
+    const a = assistantDe(conv.assistant);
+    const bloc = document.createElement("div"); bloc.className = "accueil"; bloc.id = "accueil";
+    bloc.append(pastille(a?.nom || "A"));
+    const h = document.createElement("h1"); h.textContent = a?.nom || "Bonjour"; bloc.append(h);
+    const p = document.createElement("p");
+    p.textContent = (a?.description ? a.description + " " : "") +
+        (infos.voix_disponible ? "Écrivez-moi, ou cliquez sur le micro pour me parler." : "Écrivez-moi votre message.");
+    bloc.append(p);
+    colonne.append(bloc);
+}
+
+function ajouterMessage(role, texte, mode = "texte") {
+    $("accueil")?.remove();
+    const el = document.createElement("div");
+    el.className = "message " + role;
+    const contenu = document.createElement("div"); contenu.className = "contenu";
+    if (role === "assistant") {
+        el.append(pastille(assistantDe(conv.assistant)?.nom || "A"));
+        contenu.innerHTML = markdown(texte);
+    } else {
+        if (mode === "voix") contenu.innerHTML = '<svg class="voix-icone" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10a7 7 0 0 0 14 0"/></svg>';
+        contenu.append(document.createTextNode(texte));
+    }
+    el.append(contenu);
+    colonne.append(el);
+    defiler();
+    return contenu;
+}
+
+function noteOutil(texte) {
+    const n = document.createElement("div"); n.className = "note"; n.textContent = texte;
+    colonne.insertBefore(n, attente?.parentElement === colonne ? attente : null);
+    defiler();
+}
+
+function montrerAttente() {
+    if (attente) return;
+    attente = document.createElement("div");
+    attente.className = "message assistant";
+    attente.append(pastille(assistantDe(conv.assistant)?.nom || "A"));
+    const r = document.createElement("div"); r.className = "reflexion"; r.innerHTML = "<span></span><span></span><span></span>";
+    attente.append(r);
+    colonne.append(attente);
+    defiler();
+}
+function cacherAttente() { attente?.remove(); attente = null; }
+
+function afficherConversation() {
+    colonne.innerHTML = "";
+    reponse = null; attente = null;
+    afficherEntete();
+    if (!conv.messages.length) afficherAccueil();
+    for (const m of conv.messages) ajouterMessage(m.role, m.texte || (m.mode === "voix" ? "(message vocal)" : ""), m.mode);
+    afficherAssistants(); afficherConversations();
+}
+
+// ===========================================================================
+// Ouverture d'une conversation et lien avec le serveur
+// ===========================================================================
+function fermerLien() {
+    if (ws) { ws.onclose = null; ws.close(); ws = null; }
+    arreterMicro();
+    finGeneration();
+}
+
+function ouvrirLien() {
+    const proto = location.protocol === "https:" ? "wss:" : "ws:";
+    ws = new WebSocket(`${proto}//${location.host}/ws/${conv.id}?assistant=${encodeURIComponent(conv.assistant)}`);
+    ws.binaryType = "arraybuffer";
+    ws.onmessage = surMessage;
+    ws.onclose = () => { ws = null; arreterMicro(); finGeneration(); };
+}
+
+async function nouvelleConversation(idAssistant) {
+    fermerLien();
+    conv = await api("api/conversations", { method: "POST", body: JSON.stringify({ assistant: idAssistant || conv?.assistant || "" }) });
+    afficherConversation();
+    ouvrirLien();
+    fermerBarreMobile();
+    zone.focus();
+}
+
+async function ouvrirConversation(id) {
+    fermerLien();
+    conv = await api(`api/conversations/${id}`);
+    afficherConversation();
+    ouvrirLien();
+    fermerBarreMobile();
+}
+
+function envoyerJSON(d) { if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(d)); }
+
+function surMessage(ev) {
+    if (ev.data instanceof ArrayBuffer) { jouer(ev.data); return; }
+    const m = JSON.parse(ev.data);
+    switch (m.type) {
+        case "config": tauxVoix = m.taux; break;
+        case "etat":
+            if (m.etat === "reflexion") { debutGeneration(); montrerAttente(); }
+            afficherEtatVoix(m.etat);
+            break;
+        case "utilisateur": {
+            let b = bullesVoix[m.id];
+            if (!m.texte) { b?.parentElement.remove(); delete bullesVoix[m.id]; break; }
+            if (!b) {
+                cacherAttente();
+                b = bullesVoix[m.id] = ajouterMessage("utilisateur", "", "voix");
+                b.classList.add("attente");
+                b.append(document.createTextNode("…"));
+                if (genere) montrerAttente();
+            }
+            if (m.texte !== "…") {
+                b.classList.remove("attente");
+                b.lastChild.textContent = m.texte;
+                conv.messages.push({ role: "utilisateur", texte: m.texte, mode: "voix" });
+            }
+            break;
+        }
+        case "debut":
+            cacherAttente();
+            reponse = { el: ajouterMessage("assistant", ""), texte: "" };
+            reponse.el.classList.add("curseur");
+            break;
+        case "morceau":
+            if (!reponse) { cacherAttente(); reponse = { el: ajouterMessage("assistant", ""), texte: "" }; reponse.el.classList.add("curseur"); }
+            reponse.texte += m.texte;
+            reponse.el.innerHTML = markdown(reponse.texte);
+            defiler();
+            break;
+        case "fin":
+            cacherAttente();
+            if (!reponse) reponse = { el: ajouterMessage("assistant", ""), texte: "" };
+            reponse.el.classList.remove("curseur");
+            reponse.el.innerHTML = markdown(m.texte);
+            conv.messages.push({ role: "assistant", texte: m.texte });
+            reponse = null;
+            finGeneration();
+            afficherAssistants();
+            chargerConversations();
+            break;
+        case "outil": noteOutil(m.texte); break;
+        case "titre":
+            conv.titre = m.titre; afficherEntete(); chargerConversations(); break;
+        case "silence": couperVoix(); break;
+        case "erreur": noteOutil("Erreur : " + m.message); finGeneration(); break;
+    }
+}
+
+// ===========================================================================
+// Envoi d'un message écrit
+// ===========================================================================
+function debutGeneration() {
+    genere = true;
+    $("iconeEnvoyer").style.display = "none"; $("iconeStop").style.display = "block";
+    $("envoyer").disabled = false; $("envoyer").title = "Arrêter la réponse";
+}
+function finGeneration() {
+    genere = false; cacherAttente();
+    $("iconeEnvoyer").style.display = "block"; $("iconeStop").style.display = "none";
+    $("envoyer").title = "Envoyer";
+    majBoutonEnvoyer();
+}
+function majBoutonEnvoyer() { if (!genere) $("envoyer").disabled = !zone.value.trim(); }
+
+function envoyer() {
+    if (genere) { envoyerJSON({ type: "stop" }); couperVoix(); return; }
+    const texte = zone.value.trim();
+    if (!texte || !ws || ws.readyState !== WebSocket.OPEN) return;
+    if (lireAVoixHaute) preparerAudio();
+    ajouterMessage("utilisateur", texte);
+    conv.messages.push({ role: "utilisateur", texte, mode: "texte" });
+    envoyerJSON({ type: "texte", contenu: texte, lire: lireAVoixHaute && !!infos.voix_disponible });
+    zone.value = ""; ajusterZone();
+    debutGeneration(); montrerAttente();
+}
+
+function ajusterZone() { zone.style.height = "auto"; zone.style.height = Math.min(zone.scrollHeight, 220) + "px"; majBoutonEnvoyer(); }
+zone.addEventListener("input", ajusterZone);
+zone.addEventListener("keydown", (e) => {
+    if (e.key === "Enter" && !e.shiftKey && !e.isComposing) { e.preventDefault(); if (!genere) envoyer(); }
+});
+$("envoyer").onclick = envoyer;
+
+// ===========================================================================
+// La voix : lecture des réponses et micro
+// ===========================================================================
+function preparerAudio() {
+    if (!contexteAudio) contexteAudio = new AudioContext();
+    if (contexteAudio.state === "suspended") contexteAudio.resume();
+}
+
+function jouer(donnees) {
+    if (!contexteAudio) return;
+    const pcm = new Int16Array(donnees);
+    if (!pcm.length) return;
+    const tampon = contexteAudio.createBuffer(1, pcm.length, tauxVoix);
+    const canal = tampon.getChannelData(0);
+    for (let i = 0; i < pcm.length; i++) canal[i] = pcm[i] / 32768;
+    const source = contexteAudio.createBufferSource();
+    source.buffer = tampon;
+    source.connect(contexteAudio.destination);
+    const debut = Math.max(contexteAudio.currentTime + 0.05, prochaineLecture);
+    source.start(debut);
+    prochaineLecture = debut + tampon.duration;
+    sourcesEnCours.push(source);
+    source.onended = () => {
+        sourcesEnCours = sourcesEnCours.filter(s => s !== source);
+        if (!sourcesEnCours.length) envoyerJSON({ type: "lecture_finie" });
+    };
+}
+
+function couperVoix() {
+    for (const s of sourcesEnCours) { try { s.stop(); } catch (e) {} }
+    sourcesEnCours = []; prochaineLecture = 0;
+}
+
+function majBoutonLire() {
+    $("lire").classList.toggle("oui", lireAVoixHaute);
+    $("lire").querySelector("span").textContent = lireAVoixHaute ? "Lecture à voix haute" : "Lire à voix haute";
+}
+$("lire").onclick = () => {
+    lireAVoixHaute = !lireAVoixHaute;
+    try { localStorage.setItem("lire", lireAVoixHaute ? "1" : "0"); } catch (e) {}
+    if (lireAVoixHaute) preparerAudio(); else couperVoix();
+    majBoutonLire();
+};
+
+const ETATS_VOIX = { ecoute: "Je vous écoute…", reflexion: "Je réfléchis…", parle: "Je parle…" };
+function afficherEtatVoix(etat) {
+    const el = $("etatVoix");
+    el.textContent = voixActive ? (ETATS_VOIX[etat] || "") : "";
+    el.className = "etat-voix" + (voixActive && etat === "ecoute" ? " ecoute" : "");
+    if (etat === "pret" || etat === "ecoute") { if (!reponse) finGeneration(); }
+}
+
+const CODE_CAPTEUR = `
+class Capteur extends AudioWorkletProcessor {
+    constructor() { super(); this.pas = sampleRate / 16000; this.position = 0; this.precedent = 0;
+                    this.paquet = new Int16Array(1600); this.n = 0; }
+    process(entrees) {
+        const canal = entrees[0] && entrees[0][0];
+        if (!canal) return true;
+        let pos = this.position;
+        while (pos < canal.length) {
+            const i = Math.floor(pos), f = pos - i;
+            const a = i === 0 ? this.precedent : canal[i - 1], b = canal[i];
+            this.paquet[this.n++] = Math.max(-1, Math.min(1, a + (b - a) * f)) * 32767;
+            if (this.n === this.paquet.length) {
+                this.port.postMessage(this.paquet.buffer, [this.paquet.buffer]);
+                this.paquet = new Int16Array(1600); this.n = 0;
+            }
+            pos += this.pas;
+        }
+        this.position = pos - canal.length; this.precedent = canal[canal.length - 1];
+        return true;
+    }
+}
+registerProcessor("capteur", Capteur);`;
+
+async function demarrerMicro() {
+    if (!infos.voix_disponible) {
+        noteOutil("La voix n'est pas disponible : vérifiez le jeton Hugging Face dans config.yaml (voir le README).");
+        return;
+    }
+    preparerAudio();
+    try {
+        flux = await navigator.mediaDevices.getUserMedia({
+            audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true, channelCount: 1 } });
+    } catch (e) {
+        noteOutil("Accès au micro refusé : autorisez-le dans le navigateur (icône à gauche de l'adresse).");
+        return;
+    }
+    const url = URL.createObjectURL(new Blob([CODE_CAPTEUR], { type: "application/javascript" }));
+    await contexteAudio.audioWorklet.addModule(url);
+    capteur = new AudioWorkletNode(contexteAudio, "capteur");
+    contexteAudio.createMediaStreamSource(flux).connect(capteur);
+    capteur.port.onmessage = (e) => { if (voixActive && ws && ws.readyState === WebSocket.OPEN) ws.send(e.data); };
+    voixActive = true;
+    $("micro").classList.add("actif"); $("micro").title = "Arrêter de parler à l'assistant";
+    envoyerJSON({ type: "voix", active: true });
+    afficherEtatVoix("ecoute");
+}
+
+function arreterMicro() {
+    if (!voixActive && !flux) return;
+    voixActive = false;
+    envoyerJSON({ type: "voix", active: false });
+    if (flux) { flux.getTracks().forEach(t => t.stop()); flux = null; }
+    if (capteur) { capteur.disconnect(); capteur = null; }
+    $("micro").classList.remove("actif"); $("micro").title = "Parler à l'assistant (conversation à la voix)";
+    afficherEtatVoix("");
+}
+$("micro").onclick = () => voixActive ? arreterMicro() : demarrerMicro();
+
+// ===========================================================================
+// Créer ou modifier un assistant
+// ===========================================================================
+let enEdition = null;
+const MODELE_CONSIGNES = `Tu es mon assistant pour …
+
+Ce que tu fais :
+- …
+
+Ta façon de faire :
+- Tutoiement, ton chaleureux, réponses courtes.
+- Si tu ne sais pas, dis-le franchement : n'invente rien.`;
+
+function ouvrirFormulaire(a) {
+    enEdition = a || null;
+    $("titreForm").textContent = a ? `Modifier « ${a.nom} »` : "Créer un assistant";
+    $("fNom").value = a?.nom || "";
+    $("fDescription").value = a?.description || "";
+    $("fConsignes").value = a?.consignes || MODELE_CONSIGNES;
+    $("fDossier").value = a?.dossier_documents || "";
+    const choix = $("fVoix"); choix.innerHTML = "";
+    const voix = ["", ...(infos.voix || [])];
+    if (a?.voix && !voix.includes(a.voix)) voix.push(a.voix);
+    for (const v of voix) {
+        const o = document.createElement("option"); o.value = v; o.textContent = v || "Voix par défaut"; choix.append(o);
+    }
+    choix.value = a?.voix || "";
+    $("supprimerAssistant").style.visibility = a ? "visible" : "hidden";
+    $("erreurForm").textContent = "";
+    $("voile").classList.add("visible");
+    $("fNom").focus();
+}
+function fermerFormulaire() { $("voile").classList.remove("visible"); }
+$("annulerForm").onclick = fermerFormulaire;
+$("voile").addEventListener("mousedown", (e) => { if (e.target === $("voile")) fermerFormulaire(); });
+document.addEventListener("keydown", (e) => { if (e.key === "Escape") fermerFormulaire(); });
+$("creerAssistant").onclick = () => ouvrirFormulaire(null);
+
+$("formAssistant").onsubmit = async (e) => {
+    e.preventDefault();
+    const donnees = { nom: $("fNom").value, description: $("fDescription").value, consignes: $("fConsignes").value,
+                      voix: $("fVoix").value, dossier_documents: $("fDossier").value };
+    try {
+        const a = enEdition
+            ? await api(`api/assistants/${enEdition.id}`, { method: "PUT", body: JSON.stringify(donnees) })
+            : await api("api/assistants", { method: "POST", body: JSON.stringify(donnees) });
+        fermerFormulaire();
+        await chargerAssistants();
+        // Les nouvelles consignes s'appliquent à une nouvelle conversation avec cet assistant.
+        if (!enEdition || !conv.messages.length || conv.assistant === a.id) nouvelleConversation(a.id);
+    } catch (err) { $("erreurForm").textContent = err.message; }
+};
+$("supprimerAssistant").onclick = async () => {
+    if (!enEdition || !confirm(`Supprimer l'assistant « ${enEdition.nom} » ? (Son fichier est rangé dans assistants\\corbeille.)`)) return;
+    try {
+        await api(`api/assistants/${enEdition.id}`, { method: "DELETE" });
+        fermerFormulaire();
+        await chargerAssistants();
+        if (conv.assistant === enEdition.id) nouvelleConversation(assistants[0]?.id);
+    } catch (err) { $("erreurForm").textContent = err.message; }
+};
+
+// ===========================================================================
+// Petits écrans et démarrage
+// ===========================================================================
+$("ouvrirBarre").onclick = () => $("barre").classList.toggle("ouverte");
+function fermerBarreMobile() { $("barre").classList.remove("ouverte"); }
+$("nouvelle").onclick = () => nouvelleConversation(conv?.assistant);
+
+(async function demarrer() {
+    infos = await api("api/infos");
+    $("infoModele").textContent = `Cerveau : ${infos.modele.replace(/\.gguf$/, "")}`;
+    if (!infos.voix_disponible) { $("lire").style.display = "none"; }
+    majBoutonLire();
+    await chargerAssistants();
+    await chargerConversations();
+    await nouvelleConversation(assistants[0]?.id);
+})();
+</script>
+</body>
+</html>

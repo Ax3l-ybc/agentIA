@@ -1,6 +1,6 @@
 """Le cerveau qui écoute : Gemma 4 E2B dans llama.cpp, sur l'ordinateur.
 
-Gemma 4 comprend directement l'audio : chaque phrase de l'étudiant lui est envoyée telle
+Gemma 4 lit le texte et comprend directement l'audio : chaque phrase dite à voix haute lui est envoyée telle
 quelle, sans transcription préalable. llama.cpp garde en mémoire ce qu'il a déjà lu
 (consignes, notes, fiches, historique) : à chaque phrase, il ne lit que la nouveauté.
 Une retranscription ou la rédaction d'une fiche effacerait cette mémoire : on la sauvegarde
@@ -30,7 +30,7 @@ from typing import Iterator
 
 import numpy as np
 
-log = logging.getLogger("agent.cerveau")
+log = logging.getLogger("assistant.cerveau")
 
 FICHIER_MEMOIRE = "conversation.bin"
 
@@ -103,7 +103,7 @@ class CerveauLlamaCpp:
             raise ErreurCerveau(f"llama.cpp ne répond pas : {exc}") from exc
 
     def message_vocal(self, wav: bytes, consigne: str) -> dict:
-        """Message « étudiant » contenant l'enregistrement de sa phrase."""
+        """Message de l'utilisateur contenant l'enregistrement de sa phrase."""
         return {
             "role": "user",
             "content": [
@@ -241,7 +241,9 @@ class ServeurLlamaCpp:
         self.r = r
         self.journal = journal
         self.processus: subprocess.Popen | None = None
-        self.dossier_memoire = pathlib.Path(os.path.expanduser("~")) / "DirecteurMemoire" / "memoire"
+        from .reglages import DOSSIER_DONNEES
+
+        self.dossier_memoire = DOSSIER_DONNEES / "memoire"
         self.cerveau = CerveauLlamaCpp(f"http://127.0.0.1:{r.llamacpp_port}", r.temperature)
 
     def commande(self, executable: pathlib.Path) -> list[str]:

@@ -1,75 +1,45 @@
 # =====================================================================
-#  Réglages de l'agent « Directeur de mémoire »
+#  Réglages techniques de « Mon Assistant »
 # =====================================================================
-#  Ouvrez ce fichier avec le Bloc-notes, modifiez les valeurs, enregistrez.
-#  IMPORTANT : gardez les apostrophes simples ' ' autour des chemins.
+#  Vos assistants (leurs consignes, leur voix, leurs documents) ne se règlent pas ici :
+#  modifiez-les depuis la page web, ou avec le Bloc-notes dans le dossier « assistants ».
+#
+#  Ouvrez ce fichier avec le Bloc-notes, modifiez les valeurs, enregistrez, puis relancez
+#  lancer.bat. Gardez les apostrophes simples ' ' autour des textes.
 # =====================================================================
 
-# --- 1. Vos dossiers --------------------------------------------------
-
-# Dossier « mémoire » de votre coffre Obsidian (vos notes .md).
-# L'agent le lit directement, sans faire de copie, et ne le modifie JAMAIS.
-dossier_notes: 'C:\Users\VotreNom\Documents\Obsidian\MonCoffre\Mémoire'
-
-# Dossier où l'agent écrit les fiches récapitulatives de séance.
-# Il est créé s'il n'existe pas. Il doit se trouver EN DEHORS du dossier des notes.
-dossier_recaps: 'C:\Users\VotreNom\Documents\Obsidian\MonCoffre\Recaps'
-
-# Fichier qui décrit le comportement de l'agent (son « mode de conduite »).
-# Modifiez-le avec le Bloc-notes : il est relu au début de chaque séance.
-mode_de_conduite: 'mode_de_conduite.md'
-
-# Sujet de votre mémoire, en une phrase (facultatif mais utile).
-# Une apostrophe dans le texte (« d'appui ») ne pose pas de problème.
-sujet_memoire: ''
-
-# --- 2. Le « cerveau » qui écoute (Gemma 4 dans llama.cpp) -------------
-
-cerveau:
-  # Gemma 4 E2B de Google écoute directement votre voix (sans transcription préalable).
-  # Les fichiers sont téléchargés par installer.bat dans  C:\Users\VotreNom\DirecteurMemoire\modeles
-  # Q4_K_M (2,9 Go) : bon équilibre ; Q3_K_M (2,4 Go) : un peu plus rapide, un peu moins fin.
-  modele: 'gemma-4-E2B-it-Q4_K_M.gguf'
-  module_audio: 'mmproj-F16.gguf'
-  # Mémoire de travail (en « tokens ») : de quoi lire vos notes, vos fiches et la séance.
-  taille_contexte: 16384
-  # 0 = tout sur le processeur (le plus sûr). Avec une carte graphique bien reconnue par
-  # llama.cpp, mettre 99 pour l'utiliser.
-  couches_gpu: 0
-  # Créativité des réponses (0 = très sage, 1 = très libre).
-  temperature: 0.6
-
-# --- 3. La voix (Phonon de Gradium) ----------------------------------
-
-voix:
-  modele: 'hf://gradium/phonon-40m-fr'
-  # Nom de la voix. Laissez vide pour la voix par défaut.
-  # Voix françaises : Hélène, Tiphaine, Orianne, Ninon, Noémie, Coralie, Maëlys,
-  # Solène, Lilou (féminines) ; Arnaud, Lucien, Augustin, Jules, Baptiste, Marius
-  # (masculines). Exemple : nom: 'Hélène'
-  nom: ''
-  # Vitesse : 0 = normal, -0.2 = plus rapide, 0.2 = plus lent.
-  vitesse: 0.0
-
-# --- 4. Divers --------------------------------------------------------
-
-# Jeton Hugging Face (obligatoire au premier lancement pour télécharger la voix).
-# Voir le README, étape 3.
+# Jeton Hugging Face : nécessaire une seule fois, pour télécharger la voix (voir le README).
+# Sans jeton, l'assistant marche quand même, mais seulement à l'écrit.
 jeton_huggingface: ''
 
-conversation:
-  # Secondes de silence qui marquent la fin de votre phrase. Plus court = réponses plus
-  # rapides, mais le directeur risque de vous couper pendant que vous réfléchissez.
-  pause_fin_de_phrase_s: 1.2
-  # Envoi anticipé : le directeur prépare sa réponse dès ce silence (en secondes), mais ne
-  # parle qu'une fois la pause ci-dessus atteinte ; si vous reprenez, il l'abandonne.
-  # 0 = désactivé.
-  anticipation_s: 0.4
-  # Secondes de silence avant que l'agent ne vous relance.
-  silence_avant_relance_s: 20
-  # Si toutes vos notes font moins que ce nombre de caractères,
-  # l'agent les connaît en entier dès le début. Sinon, il les consulte au besoin.
-  notes_en_entier_si_moins_de: 20000
+# --- Le cerveau : Gemma 4 E2B de Google, dans llama.cpp -----------------
+cerveau:
+  # Version du modèle (dans %USERPROFILE%\MonAssistant\modeles).
+  #   'gemma-4-E2B-it-Q4_K_M.gguf' (conseillé) ; 'gemma-4-E2B-it-Q3_K_M.gguf' plus rapide, un peu moins fin.
+  modele: 'gemma-4-E2B-it-Q4_K_M.gguf'
+  # Mémoire de travail (en « jetons ») : 16384 permet de longues conversations et des documents.
+  taille_contexte: 16384
+  # 0 = tout sur le processeur (le plus sûr). Avec une carte graphique bien reconnue,
+  # 99 met tout le modèle dessus (bien plus rapide).
+  couches_gpu: 0
+  # Créativité des réponses : 0.3 = sobre et précis, 0.8 = plus inventif.
+  temperature: 0.6
 
-# Port de la page web (http://localhost:8000).
+# --- La voix : Phonon de Gradium ----------------------------------------
+voix:
+  modele: 'hf://gradium/phonon-40m-fr'
+  # Vitesse : 0 = normal, -0.2 = plus rapide, 0.2 = plus lent.
+  vitesse: 0.0
+  # (Le nom de la voix se choisit pour chaque assistant, dans la page.)
+
+# --- La conversation à la voix ------------------------------------------
+conversation:
+  # Secondes de silence qui marquent la fin de votre phrase. Augmentez (1.5, 1.8…) si
+  # l'assistant vous coupe pendant que vous réfléchissez.
+  pause_fin_de_phrase_s: 1.2
+  # Envoi anticipé : l'assistant prépare sa réponse dès ce court silence, mais ne parle
+  # qu'une fois la pause ci-dessus atteinte ; si vous reprenez, il l'abandonne. 0 = désactivé.
+  anticipation_s: 0.4
+
+# Port de la page web (http://127.0.0.1:8000). Un autre est choisi s'il est déjà pris.
 port: 8000

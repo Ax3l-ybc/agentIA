@@ -1,10 +1,10 @@
 @echo off
 setlocal
 cd /d "%~dp0"
-title Installation - Directeur de memoire
+title Installation - Mon Assistant
 
 echo ==========================================================
-echo    Installation du Directeur de memoire
+echo    Installation de Mon Assistant
 echo    (a faire une seule fois, comptez 10 a 30 minutes)
 echo ==========================================================
 echo.
@@ -56,19 +56,19 @@ if errorlevel 1 (
 echo        llama.cpp : OK
 
 rem ---- 5. Le cerveau : Gemma 4 E2B (environ 3,8 Go, une seule fois) ----
-echo [5/5] Telechargement de Gemma 4 E2B (environ 3,8 Go, long la premiere fois)...
+echo [5/5] Telechargement de Gemma 4 E2B (environ 3,8 Go, long la premiere fois ;
+echo        deja present si vous avez installe le directeur de memoire)...
 set PYTHONUTF8=1
 set HF_HUB_DISABLE_SYMLINKS_WARNING=1
-".venv\Scripts\python.exe" -m agent.telecharger
+".venv\Scripts\python.exe" -m assistant.telecharger
 if errorlevel 1 goto erreur
 
 echo.
 echo ==========================================================
 echo    Installation terminee !
-echo    1. Verifiez config.yaml (vos dossiers et votre jeton Hugging Face).
+echo    1. Pour la voix : indiquez votre jeton Hugging Face dans config.yaml
+echo       (voir le README). Sans jeton, l'assistant marche a l'ecrit.
 echo    2. Double-cliquez sur lancer.bat
-echo    Ollama n'est plus utilise : vous pouvez le quitter (icone pres de
-echo    l'horloge) pour liberer de la memoire.
 echo ==========================================================
 pause
 exit /b 0
