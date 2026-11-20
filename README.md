@@ -34,24 +34,36 @@ Une page comme ChatGPT ou Claude, mais **qui tourne entièrement sur votre ordin
 
 ---
 
-## Étape 1 : télécharger
+## Étape 1 : télécharger l'installateur
 
-1. Sur la page GitHub du projet, choisissez la branche **assistant-personnel**, cliquez sur le
-   bouton vert **Code**, puis sur **Download ZIP**.
-   (Lien direct : <https://github.com/Ax3l-ybc/agentIA/archive/refs/heads/assistant-personnel.zip>)
-2. Faites un clic droit sur le fichier téléchargé, puis **Extraire tout…**
-3. Placez le dossier obtenu où vous voulez, par exemple dans `Documents`.
+Téléchargez **`Meilleur-collegue-installation.exe`** :
+<https://github.com/Ax3l-ybc/agentIA/releases/download/meilleur-collegue/Meilleur-collegue-installation.exe>
+
+(Le dépôt est privé : il faut être connecté à un compte GitHub qui y a accès. On le retrouve
+aussi dans la partie **Releases** de la page du projet, release « Meilleur collègue ».)
 
 ## Étape 2 : installer (une seule fois)
 
-1. Ouvrez le dossier, puis **double-cliquez sur `installer.bat`**.
+1. **Double-cliquez sur `Meilleur-collegue-installation.exe`**.
 2. Si Windows affiche « Windows a protégé votre ordinateur », cliquez sur
-   **Informations complémentaires**, puis sur **Exécuter quand même**.
-3. Attendez le message **« Installation terminée ! »** (10 à 30 minutes).
+   **Informations complémentaires**, puis sur **Exécuter quand même** (l'installateur n'est pas
+   encore « signé », d'où cet avertissement).
+3. Cliquez sur **Suivant**, puis **Installer**. Pas besoin d'être administrateur : le programme
+   s'installe dans votre compte (`C:\Users\VotreNom\AppData\Local\Programs\Meilleur collegue`).
+4. Une **fenêtre noire** s'ouvre et télécharge le reste (10 à 30 minutes) : ne la fermez pas.
+   Elle se ferme toute seule à la fin.
+5. Laissez cochée la case **« Lancer Meilleur collègue maintenant »** et cliquez sur **Terminer**.
 
-À la fin, un raccourci **« Meilleur collègue »** est créé sur votre Bureau : c'est lui qui
-lance l'assistant. (S'il a disparu, double-cliquez sur `creer_raccourci.bat` dans le dossier
-du programme pour le recréer.)
+Un raccourci **« Meilleur collègue »** est créé sur votre Bureau et dans le menu Démarrer :
+c'est lui qui lance l'assistant. Si la connexion a été coupée pendant l'installation,
+relancez simplement l'installateur : il reprend là où il s'était arrêté.
+
+<details>
+<summary>Sans l'installateur (avec le ZIP)</summary>
+
+Sur la page GitHub, branche **assistant-personnel**, bouton vert **Code**, puis **Download ZIP**.
+Extrayez-le, puis double-cliquez sur `installer.bat` dans le dossier obtenu.
+</details>
 
 L'installation met en place Python, **llama.cpp** (le programme qui fait tourner le « cerveau »)
 et télécharge le cerveau lui-même, **Gemma 4 E2B** de Google (environ 3,8 Go, rangé dans
@@ -214,8 +226,8 @@ donnez le rôle dès la première phrase, et restez court.
 |---|---|
 | « La voix n'a pas pu être chargée » | Vérifiez votre connexion internet au premier lancement (la voix Kokoro, environ 180 Mo, se télécharge une fois), puis relancez. Avec Phonon : refaites l'étape 3. En attendant, l'assistant marche à l'écrit. |
 | « config.yaml est mal écrit » | Vérifiez les apostrophes `' '` autour des textes et les espaces en début de ligne. |
-| « llama.cpp est introuvable » | Relancez `installer.bat`, puis fermez et rouvrez `lancer.bat`. Voir aussi plus bas. |
-| « Fichier introuvable pour le modèle » | Relancez `installer.bat` : le téléchargement reprend où il s'était arrêté. |
+| « llama.cpp est introuvable » | Relancez l'installateur (ou `installer.bat`), puis fermez et rouvrez `lancer.bat`. Voir aussi plus bas. |
+| « Fichier introuvable pour le modèle » | Relancez l'installateur (ou `installer.bat`) : le téléchargement reprend où il s'était arrêté. |
 | « Le dossier de documents n'existe pas » | Vérifiez le chemin : copiez-le depuis la barre d'adresse de l'Explorateur Windows. |
 | L'assistant ne vous entend pas | Autorisez le micro dans le navigateur (icône à gauche de l'adresse) et vérifiez le micro choisi dans Windows. |
 | Il vous coupe pendant que vous réfléchissez | Augmentez `pause_fin_de_phrase_s` (par exemple `1.8`) dans `config.yaml`. |
@@ -233,9 +245,15 @@ de `llama-server.exe` dans `config.yaml`, partie `cerveau:` : `serveur: 'C:\chem
 
 ### Mettre à jour
 
-Téléchargez le nouveau ZIP et copiez son contenu par-dessus l'ancien dossier, **sauf**
-`config.yaml` (votre jeton) et le dossier `assistants` (vos assistants). Vos conversations et
-le modèle, rangés dans `C:\Users\VotreNom\MonAssistant`, ne bougent pas.
+Téléchargez le nouvel installateur et lancez-le : il remplace le programme mais **garde**
+`config.yaml`, vos assistants, vos conversations, vos profils et les modèles déjà téléchargés.
+
+### Désinstaller
+
+**Paramètres > Applications > Applications installées > Meilleur collègue > Désinstaller.**
+Windows demande alors si vous voulez aussi supprimer vos conversations, profils et modèles
+(dossier `C:\Users\VotreNom\MonAssistant`) ; si vous les gardez, une copie de vos réglages et
+de vos assistants y est rangée dans `sauvegarde-reglages`.
 
 ---
 
@@ -262,6 +280,7 @@ assistants/           un fichier par assistant (nom, voix, documents, consignes)
 installer.bat         installation (Python, llama.cpp, Gemma 4, raccourci sur le Bureau)
 lancer.bat            lancement (c'est ce que lance le raccourci « Meilleur collègue »)
 creer_raccourci.bat   recrée le raccourci « Meilleur collègue » sur le Bureau
+installateur/         fabrication de Meilleur-collegue-installation.exe (NSIS : construire.sh)
 assistant/
   __main__.py         démarrage : cerveau, voix, page web
   application.py      le serveur de la page (assistants, conversations)
@@ -278,7 +297,7 @@ assistant/
   reunion.py          comptes rendus de réunion (transcription par morceaux, puis rédaction)
   raccourci.ps1       création du raccourci sur le Bureau
   cerveau.py          Gemma 4 dans llama.cpp
-  moteurs.py          la voix (Phonon) et le détecteur de parole (Silero)
+  moteurs.py          la voix (Kokoro ou Phonon) et le détecteur de parole (Silero)
   phrases.py          découpe de votre voix en phrases
   static/index.html   la page
 tests/                tests automatiques (faux cerveau, voix simulée)

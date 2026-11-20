@@ -1,5 +1,8 @@
 @echo off
 setlocal
+rem  /auto : lance par l'installateur Meilleur-collegue-installation.exe (pas de pause a la fin
+rem          si tout va bien ; le raccourci du Bureau est cree par l'installateur).
+set "AUTO=%~1"
 cd /d "%~dp0"
 title Installation - Mon Assistant
 
@@ -67,7 +70,7 @@ rem ---- Carte graphique : llama.cpp adapte, si le PC en a une ----
 ".venv\Scripts\python.exe" -m assistant.materiel --installer
 
 rem ---- Raccourci "Meilleur collegue" sur le Bureau ----
-powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0assistant\raccourci.ps1"
+if /i not "%AUTO%"=="/auto" powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0assistant\raccourci.ps1"
 
 echo.
 echo ==========================================================
@@ -75,7 +78,7 @@ echo    Installation terminee !
 echo    Double-cliquez sur "Meilleur collegue" sur votre Bureau
 echo    (ou sur lancer.bat dans ce dossier).
 echo ==========================================================
-pause
+if /i not "%AUTO%"=="/auto" pause
 exit /b 0
 
 :erreur

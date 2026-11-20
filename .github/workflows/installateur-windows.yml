@@ -1,0 +1,65 @@
+# Fabrique l'installateur Windows de « Meilleur collègue » à chaque modification de la branche
+# assistant-personnel, et le range dans la release « meilleur-collegue » du dépôt.
+# Le dépôt étant privé, seules les personnes qui y ont accès peuvent le télécharger.
+name: Installateur Windows (Meilleur collègue)
+
+on:
+  push:
+    branches: [assistant-personnel]
+    paths:
+      - 'assistant/**'
+      - 'assistants/**'
+      - 'installateur/**'
+      - 'config.yaml'
+      - 'requirements.txt'
+      - '*.bat'
+      - 'README.md'
+      - '.github/workflows/installateur-windows.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: installateur-windows
+  cancel-in-progress: true
+
+jobs:
+  installateur:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Installer NSIS
+        run: sudo apt-get update && sudo apt-get install -y nsis
+
+      - name: Fabriquer l'installateur
+        run: |
+          VERSION="1.0.${{ github.run_number }}"
+          installateur/construire.sh "$VERSION"
+          cp "installateur/Meilleur-collegue-installation-$VERSION.exe" Meilleur-collegue-installation.exe
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+
+      - name: Garder l'installateur avec ce lancement
+        uses: actions/upload-artifact@v4
+        with:
+          name: Meilleur-collegue-installation
+          path: Meilleur-collegue-installation.exe
+
+      - name: Déplacer l'étiquette sur cette version
+        run: |
+          git tag -f meilleur-collegue
+          git push -f origin refs/tags/meilleur-collegue
+
+      - name: Publier dans la release « meilleur-collegue »
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: meilleur-collegue
+          name: Meilleur collègue (dernière version)
+          make_latest: false
+          body: |
+            Installateur Windows de « Meilleur collègue », version ${{ env.VERSION }}.
+            Téléchargez **Meilleur-collegue-installation.exe**, double-cliquez dessus et suivez les étapes
+            (voir le README de la branche assistant-personnel).
+          files: Meilleur-collegue-installation.exe
+          overwrite_files: true
