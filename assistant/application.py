@@ -44,6 +44,10 @@ def creer_app(app_etat: Application) -> fastapi.FastAPI:
         return fastapi.responses.FileResponse(DOSSIER_STATIC / "index.html",
                                               headers={"Cache-Control": "no-store"})
 
+    @app.get("/icone.png")
+    async def icone():
+        return fastapi.responses.FileResponse(DOSSIER_STATIC / "icone.png")
+
     @app.get("/api/infos")
     async def infos():
         r = app_etat.reglages

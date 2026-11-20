@@ -4,6 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Mon Assistant</title>
+<link rel="icon" type="image/png" href="icone.png">
 <style>
 :root {
     --fond: #faf9f6;
@@ -56,8 +57,7 @@ svg { width: 18px; height: 18px; flex: none; }
     display: flex; flex-direction: column; height: 100%;
 }
 .marque { display: flex; align-items: center; gap: .6rem; padding: 1rem 1rem .5rem; font-weight: 600; font-size: 1.05rem; }
-.logo { width: 28px; height: 28px; border-radius: 8px; background: var(--accent); color: var(--accent-texte);
-        display: grid; place-items: center; font-size: .9rem; font-weight: 700; }
+.logo { width: 30px; height: 30px; flex: none; }
 .bouton-plein {
     display: flex; align-items: center; gap: .5rem; margin: .5rem .75rem; padding: .6rem .8rem;
     border-radius: 10px; border: 1px solid var(--bord); background: var(--surface); font-weight: 500;
@@ -194,7 +194,7 @@ svg { width: 18px; height: 18px; flex: none; }
 </head>
 <body>
 <aside id="barre">
-    <div class="marque"><div class="logo">A</div>Mon Assistant</div>
+    <div class="marque"><img class="logo" src="icone.png" alt="">Mon Assistant</div>
     <button class="bouton-plein" id="nouvelle">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
         Nouvelle conversation
