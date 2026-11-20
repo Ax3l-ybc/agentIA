@@ -150,6 +150,25 @@ def ajouter_markdown(document, texte: str) -> None:
             p = document.add_paragraph()
             run = p.add_run("\n".join(code))
             run.font.name = "Consolas"
+        elif (re.match(r"^\s*\|.*\|\s*$", ligne) and i + 1 < len(lignes) and "-" in lignes[i + 1]
+              and re.match(r"^\s*\|?[\s:|-]+\|?\s*$", lignes[i + 1])):
+            rangees = [ligne]
+            i += 2
+            while i < len(lignes) and re.match(r"^\s*\|.*\|\s*$", lignes[i]):
+                rangees.append(lignes[i])
+                i += 1
+            cellules = [[c.strip() for c in r.strip().strip("|").split("|")] for r in rangees]
+            largeur = max(len(r) for r in cellules)
+            tableau = document.add_table(rows=len(cellules), cols=largeur)
+            tableau.style = "Table Grid"
+            for x, rangee in enumerate(cellules):
+                for y, texte in enumerate(rangee):
+                    p = tableau.cell(x, y).paragraphs[0]
+                    _en_ligne(p, texte.replace("**", "") if x == 0 else texte)
+                    if x == 0:
+                        for run in p.runs:
+                            run.bold = True
+            continue
         elif m := re.match(r"^(#{1,6})\s+(.*)", ligne):
             document.add_heading(m.group(2).strip().strip("*"), level=min(len(m.group(1)), 3))
         elif m := re.match(r"^\s*[-*•]\s+(.*)", ligne):

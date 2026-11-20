@@ -22,6 +22,7 @@ def maintenant() -> str:
 class Conversation:
     id: str
     assistant: str  # identifiant de l'assistant (son fichier)
+    utilisateur: str = ""  # la personne à qui appartient la conversation ("" : à tout le monde)
     titre: str = "Nouvelle conversation"
     cree: str = dataclasses.field(default_factory=maintenant)
     modifie: str = dataclasses.field(default_factory=maintenant)
@@ -55,9 +56,9 @@ class Conversations:
             raise ValueError("Identifiant de conversation invalide.")
         return self.dossier / f"{ident}.json"
 
-    def creer(self, assistant: str) -> Conversation:
+    def creer(self, assistant: str, utilisateur: str = "") -> Conversation:
         ident = datetime.datetime.now().strftime("%Y%m%d-%H%M%S-") + secrets.token_hex(2)
-        return Conversation(id=ident, assistant=assistant)
+        return Conversation(id=ident, assistant=assistant, utilisateur=utilisateur)
 
     def charger(self, ident: str) -> Conversation | None:
         chemin = self._chemin(ident)
@@ -76,14 +77,17 @@ class Conversations:
                               encoding="utf-8")
         temporaire.replace(chemin)
 
-    def lister(self) -> list[dict]:
+    def lister(self, utilisateur: str | None = None) -> list[dict]:
+        """Les conversations (d'une personne, avec celles qui n'appartiennent à personne)."""
         resume = []
         for chemin in self.dossier.glob("*.json"):
             try:
                 d = json.loads(chemin.read_text(encoding="utf-8"))
             except (OSError, ValueError):
                 continue
-            resume.append({k: d.get(k) for k in ("id", "titre", "assistant", "modifie")})
+            if utilisateur is not None and d.get("utilisateur") not in ("", None, utilisateur):
+                continue
+            resume.append({k: d.get(k) for k in ("id", "titre", "assistant", "modifie", "utilisateur")})
         return sorted(resume, key=lambda c: c.get("modifie") or "", reverse=True)
 
     def renommer(self, ident: str, titre: str) -> None:

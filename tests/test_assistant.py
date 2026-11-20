@@ -126,7 +126,7 @@ def environnement(tmp_path):
     port_llm, port_app = port_libre(), port_libre()
     faux = lancer_serveur(faux_llamacpp(journal), port_llm)
     r = Reglages(port=port_app, pause_s=0.8, dossier_assistants=assistants,
-                 dossier_conversations=tmp_path / "conversations")
+                 dossier_conversations=tmp_path / "conversations", dossier_utilisateurs=tmp_path / "personnes")
     etat = Application(r, CerveauLlamaCpp(f"http://127.0.0.1:{port_llm}"), moteurs.MoteurVoixSimulation(),
                        detecteur_energie)
     serveur = lancer_serveur(creer_app(etat), port_app)
@@ -574,3 +574,231 @@ def test_compte_rendu_d_un_enregistrement_en_direct(environnement):
     assert etat["etape"] == "termine", etat
     conv = env["etat"].conversations.charger(etat["conversation"])
     assert conv.assistant == "assistant-du-quotidien" and "Commander du pain" in conv.messages[1]["texte"]
+
+
+# ---------------------------------------------------------------------------
+# Point 8 : choix du cerveau ; profils des personnes
+# ---------------------------------------------------------------------------
+
+def test_conseil_selon_le_pc():
+    from assistant.modeles import conseil
+
+    assert (conseil(16, 0).ecoute, conseil(16, 0).redacteur, conseil(16, 0).carte_graphique) == ("e2b", None, False)
+    assert conseil(32, 0).ecoute == "e4b" and conseil(32, 0).redacteur is None
+    assert conseil(64, 0).redacteur == "26b"  # sur processeur, seul 26B-A4B reste assez rapide
+    nvidia_8 = conseil(16, 8)
+    assert (nvidia_8.ecoute, nvidia_8.redacteur, nvidia_8.carte_graphique) == ("e4b", None, True)
+    assert conseil(32, 16).redacteur == "12b"  # 7 Go (E4B) + 9 Go (12B) sur une carte de 16 Go
+    assert conseil(64, 48).redacteur == "31b"
+
+
+def test_choix_enregistre(tmp_path):
+    from assistant.modeles import Choix, ecrire_choix, lire_choix
+
+    assert lire_choix(tmp_path / "absent.json") == Choix()
+    ecrire_choix(Choix("e4b", "12b", True), tmp_path / "c.json")
+    assert lire_choix(tmp_path / "c.json") == Choix("e4b", "12b", True)
+    (tmp_path / "c.json").write_text('{"ecoute": "12b"}')  # 12B n'écoute pas : choix refusé
+    assert lire_choix(tmp_path / "c.json") == Choix()
+
+
+def test_fichiers_llamacpp_pour_la_carte():
+    from assistant.llamacpp_gpu import choisir_fichiers
+
+    noms = ["llama-v0.9.0-bin-win-cpu-x64.zip", "llama-v0.9.0-bin-win-cuda-12.4-x64.zip",
+            "cudart-llama-bin-win-cuda-12.4-x64.zip", "llama-v0.9.0-bin-win-cuda-13.4-x64.zip",
+            "cudart-llama-bin-win-cuda-13.4-x64.zip", "llama-v0.9.0-bin-win-cuda-13.4-arm64.zip",
+            "llama-v0.9.0-bin-win-vulkan-x64.zip", "llama-v0.9.0-bin-win-vulkan-arm64.zip"]
+    assert choisir_fichiers(noms, "nvidia") == ["llama-v0.9.0-bin-win-cuda-12.4-x64.zip",
+                                                "cudart-llama-bin-win-cuda-12.4-x64.zip"]
+    assert choisir_fichiers(noms, "vulkan") == ["llama-v0.9.0-bin-win-vulkan-x64.zip"]
+
+
+def test_telechargement_avec_reprise(tmp_path):
+    from assistant.modeles import telecharger_fichier
+
+    contenu = bytes(range(256)) * 4000
+
+    class Serveur(__import__("http.server").server.BaseHTTPRequestHandler):
+        def do_GET(self):
+            debut = int((self.headers.get("Range") or "bytes=0-").split("=")[1].split("-")[0])
+            self.send_response(206 if debut else 200)
+            self.send_header("Content-Length", str(len(contenu) - debut))
+            self.end_headers()
+            self.wfile.write(contenu[debut:])
+
+        def log_message(self, *a):
+            pass
+
+    import http.server
+
+    serveur = http.server.HTTPServer(("127.0.0.1", 0), Serveur)
+    threading.Thread(target=serveur.serve_forever, daemon=True).start()
+    cible = tmp_path / "modele.gguf"
+    (tmp_path / "modele.gguf.partiel").write_bytes(contenu[:300000])  # téléchargement interrompu
+    etapes = []
+    telecharger_fichier(f"http://127.0.0.1:{serveur.server_address[1]}/m", cible, lambda r, t: etapes.append((r, t)))
+    serveur.shutdown()
+    assert cible.read_bytes() == contenu and not (tmp_path / "modele.gguf.partiel").exists()
+    assert etapes[-1] == (len(contenu), len(contenu))
+
+
+class FauxServeur:
+    """Remplace ServeurLlamaCpp : un « llama.cpp » qui démarre (ou pas) à la demande."""
+
+    pannes: set = set()
+    adresses: dict = {}
+
+    def __init__(self, r, journal, modele=None, mmproj=None, port=None, couches_gpu=0, nom=""):
+        self.modele, self.mmproj, self.nom, self.couches_gpu = modele, mmproj, nom, couches_gpu
+        self.cerveau = CerveauLlamaCpp(FauxServeur.adresses.get(nom, "http://127.0.0.1:1"))
+        self.demarre = False
+
+    def demarrer(self):
+        from assistant.cerveau import ErreurCerveau
+
+        if self.modele.name in FauxServeur.pannes:
+            raise ErreurCerveau(f"pas assez de mémoire pour {self.modele.name}")
+        self.demarre = True
+
+    def arreter(self):
+        self.demarre = False
+
+    def reparer(self):
+        pass
+
+
+def test_gestion_des_cerveaux(tmp_path, monkeypatch):
+    from assistant import modeles
+    from assistant.cerveaux import GestionCerveaux
+    from assistant.modeles import Choix
+
+    monkeypatch.setattr(modeles, "FICHIER_CHOIX", tmp_path / "cerveau.json")
+    monkeypatch.setattr(modeles, "a_telecharger", lambda m: [])
+    ecrits = []
+    monkeypatch.setattr(modeles, "ecrire_choix", lambda c, f=None: ecrits.append(c))
+    g = GestionCerveaux(Reglages(), Choix(), fabrique=FauxServeur)
+    g.demarrer()
+    assert g.ecoute.modele.name == "gemma-4-E2B-it-Q4_K_M.gguf" and g.ecoute.mmproj is not None
+    assert g.redaction is None and g.redacteur is g.cerveau
+    # Passage à E4B + 12B sur la carte graphique.
+    g._appliquer(Choix("e4b", "12b", False))
+    assert g.etat["etape"] == "pret" and g.description() == "Gemma 4 E4B + Gemma 4 12B"
+    assert g.redaction.mmproj is None and g.redaction.nom == "rédaction" and g.redacteur is not g.cerveau
+    assert ecrits[-1] == Choix("e4b", "12b", False)
+    # Un choix qui ne démarre pas : l'ancien est remis en route.
+    FauxServeur.pannes = {"gemma-4-31B-it-Q4_K_M.gguf"}
+    g._appliquer(Choix("e4b", "31b", False))
+    FauxServeur.pannes = set()
+    assert g.etat["etape"] == "erreur" and "pas assez de mémoire" in g.etat["message"]
+    assert "L'ancien cerveau a été remis en route" in g.etat["message"]
+    assert g.choix == Choix("e4b", "12b", False) and g.ecoute.demarre and g.redaction.demarre
+    assert g.pret.is_set()
+    # Au démarrage, un rédacteur qui ne démarre pas n'empêche pas l'assistant de marcher.
+    FauxServeur.pannes = {"gemma-4-26B-A4B-it-UD-Q4_K_M.gguf"}
+    g2 = GestionCerveaux(Reglages(), Choix("e2b", "26b"), fabrique=FauxServeur)
+    g2.demarrer()
+    FauxServeur.pannes = set()
+    assert g2.redaction is None and g2.choix.redacteur is None and g2.ecoute.demarre
+
+
+def test_ecrit_au_redacteur_voix_a_l_ecoute(tmp_path, monkeypatch):
+    """Avec deux cerveaux : les messages écrits vont au rédacteur, la voix et les
+    retranscriptions au cerveau d'écoute."""
+    from assistant.cerveaux import GestionCerveaux
+    from assistant.modeles import Choix
+
+    journal_ecoute, journal_redaction = [], []
+    port_e, port_r, port_app = port_libre(), port_libre(), port_libre()
+    faux_e = lancer_serveur(faux_llamacpp(journal_ecoute), port_e)
+    faux_r = lancer_serveur(faux_llamacpp(journal_redaction), port_r)
+    FauxServeur.adresses = {"écoute": f"http://127.0.0.1:{port_e}", "rédaction": f"http://127.0.0.1:{port_r}"}
+    g = GestionCerveaux(Reglages(), Choix("e2b", "12b"), fabrique=FauxServeur)
+    g.demarrer()
+    assistants = tmp_path / "assistants"
+    assistants.mkdir()
+    (assistants / "a.md").write_text("---\nnom: A\n---\nTu es un assistant.", encoding="utf-8")
+    r = Reglages(port=port_app, pause_s=0.8, dossier_assistants=assistants,
+                 dossier_conversations=tmp_path / "conv", dossier_utilisateurs=tmp_path / "personnes")
+    etat = Application(r, g, moteurs.MoteurVoixSimulation(), detecteur_energie)
+    serveur = lancer_serveur(creer_app(etat), port_app)
+
+    async def actions(ws, recus, attendre):
+        await ws.send(json.dumps({"type": "texte", "contenu": "Bonjour"}))
+        await attendre(lambda m: m.get("type") == "fin")
+        await ws.send(json.dumps({"type": "voix", "active": True}))
+        signal = np.concatenate([ton(1.5), np.zeros(24000, np.float32)])
+        for i in range(0, len(signal), 1600):
+            await ws.send(moteurs.float_vers_pcm16(signal[i:i + 1600]))
+            await asyncio.sleep(0.1)
+        await attendre(lambda m: m.get("type") == "utilisateur" and m.get("texte", "").startswith("Je voudrais"))
+
+    try:
+        asyncio.run(discuter(port_app, "conv-deux", "a", actions))
+    finally:
+        serveur.should_exit = faux_e.should_exit = faux_r.should_exit = True
+        FauxServeur.adresses = {}
+    ecrit = [c for c in journal_redaction if c.get("stream") and c.get("max_tokens") != 1]
+    voix = [c for c in journal_ecoute if c.get("stream") and c.get("max_tokens") != 1]
+    assert ecrit and ecrit[0]["messages"][-1]["content"] == "Bonjour"
+    assert isinstance(voix[0]["messages"][-1]["content"], list)  # la phrase dite, en audio
+    assert voix[-1]["messages"][-1]["role"] == "tool"  # la suite de la réponse vocale, après l'outil
+    assert any("messages" in c and not c.get("stream") for c in journal_ecoute)  # retranscription
+    assert not any(isinstance(c.get("messages", [{}])[-1].get("content"), list) for c in journal_redaction)
+
+
+def test_profils_des_personnes(environnement):
+    import urllib.request
+
+    from assistant.utilisateurs import Utilisateurs
+
+    env = environnement
+    base = f"http://127.0.0.1:{env['port']}"
+
+    def appel(methode, chemin, donnees=None):
+        req = urllib.request.Request(base + chemin, method=methode,
+                                     data=json.dumps(donnees).encode() if donnees is not None else None,
+                                     headers={"Content-Type": "application/json"})
+        try:
+            with urllib.request.urlopen(req) as r:
+                return r.status, json.load(r)
+        except urllib.error.HTTPError as e:
+            return e.code, json.load(e)
+
+    code, err = appel("POST", "/api/utilisateurs", {"prenom": " "})
+    assert code == 400 and "prénom" in err["erreur"]
+    _, sophie = appel("POST", "/api/utilisateurs", {
+        "prenom": "Sophie", "role": "Comptable", "besoins": "Je suis dyslexique : phrases courtes.",
+        "preferences": "Vouvoiement, réponses avec des listes."})
+    _, marc = appel("POST", "/api/utilisateurs", {"prenom": "Marc"})
+    assert sophie["id"].startswith("sophie-") and (env["tmp"] / "conversations").exists()
+
+    async def actions(ws, recus, attendre):
+        await ws.send(json.dumps({"type": "texte", "contenu": "Bonjour"}))
+        await attendre(lambda m: m.get("type") == "fin")
+
+    async def discuter_pour(qui, conv_id):
+        import websockets
+
+        async with websockets.connect(f"ws://127.0.0.1:{env['port']}/ws/{conv_id}?assistant=assistant-du-quotidien"
+                                      f"&utilisateur={qui}") as ws:
+            while json.loads(await ws.recv()).get("etat") != "pret":
+                pass
+            await ws.send(json.dumps({"type": "texte", "contenu": "Bonjour"}))
+            while json.loads(await ws.recv()).get("type") != "fin":
+                pass
+
+    asyncio.run(discuter_pour(sophie["id"], "conv-sophie"))
+    asyncio.run(discuter_pour(marc["id"], "conv-marc"))
+    systeme = [c for c in env["journal"] if c.get("stream") and c.get("max_tokens") != 1][0]["messages"][0]["content"]
+    assert "# La personne avec qui tu parles" in systeme and "Prénom : Sophie" in systeme
+    assert "Mes besoins particuliers : Je suis dyslexique" in systeme and "Vouvoiement" in systeme
+    # Chacun retrouve ses conversations (et pas celles des autres).
+    _, liste_sophie = appel("GET", f"/api/conversations?utilisateur={sophie['id']}")
+    _, liste_marc = appel("GET", f"/api/conversations?utilisateur={marc['id']}")
+    assert [c["id"] for c in liste_sophie] == ["conv-sophie"] and [c["id"] for c in liste_marc] == ["conv-marc"]
+    # Modifier puis supprimer un profil.
+    _, sophie = appel("PUT", f"/api/utilisateurs/{sophie['id']}", {**sophie, "role": "Cheffe comptable"})
+    assert Utilisateurs(env["tmp"] / "personnes").lire(sophie["id"]).role == "Cheffe comptable"
+    code, _ = appel("DELETE", f"/api/utilisateurs/{marc['id']}")
+    assert code == 200 and [u["prenom"] for u in appel("GET", "/api/utilisateurs")[1]] == ["Sophie"]

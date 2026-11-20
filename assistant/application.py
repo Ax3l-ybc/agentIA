@@ -13,6 +13,7 @@ import fastapi.responses
 from .conversations import Conversation, Conversations
 from .profils import Profil, Profils
 from .reglages import Reglages
+from .utilisateurs import Utilisateur, Utilisateurs
 
 log = logging.getLogger("assistant")
 
@@ -23,15 +24,33 @@ class Application:
     """Ce que partagent toutes les conversations : le cerveau, la voix, les réglages."""
 
     def __init__(self, reglages: Reglages, cerveau, voix, detecteur_factory, reparer=None):
+        """`cerveau` : le gestionnaire des cerveaux (cerveaux.py), ou un seul cerveau (tests)."""
+        from .cerveaux import GestionCerveaux
+
         self.reglages = reglages
-        self.cerveau = cerveau
+        self.gestion = cerveau if isinstance(cerveau, GestionCerveaux) else None
+        self._cerveau = None if self.gestion else cerveau
         self.voix = voix
         self.nouveau_detecteur = detecteur_factory  # un détecteur de parole par conversation
-        self.reparer = reparer  # redémarre llama.cpp s'il s'arrête
+        self.reparer = self.gestion.reparer if self.gestion else reparer  # redémarre llama.cpp
         self.profils = Profils(reglages.dossier_assistants)
         self.conversations = Conversations(reglages.dossier_conversations)
+        self.utilisateurs = Utilisateurs(reglages.dossier_utilisateurs)
         self.pieces: dict[str, dict] = {}  # fichiers joints, en attente du message qui les envoie
         self.reunions: dict = {}  # comptes rendus de réunion en cours (voir reunion.py)
+
+    @property
+    def cerveau(self):
+        """Le cerveau qui écoute : voix, retranscriptions."""
+        return self.gestion.cerveau if self.gestion else self._cerveau
+
+    @property
+    def redacteur(self):
+        """Le cerveau qui rédige : messages écrits, comptes rendus (le même s'il n'y en a qu'un)."""
+        return self.gestion.redacteur if self.gestion else self._cerveau
+
+    def description_cerveau(self) -> str:
+        return self.gestion.description() if self.gestion else self.reglages.llamacpp_modele.name
 
     def deposer_fichier(self, nom: str, donnees: bytes) -> dict:
         """Lit un fichier joint et garde son texte jusqu'à l'envoi du message."""
@@ -79,7 +98,8 @@ def creer_app(app_etat: Application) -> fastapi.FastAPI:
     async def infos():
         r = app_etat.reglages
         return {
-            "modele": r.llamacpp_modele.name,
+            "modele": app_etat.description_cerveau(),
+            "reglage_cerveau": app_etat.gestion is not None,
             "voix": list(getattr(app_etat.voix, "voices", [])),
             "voix_disponible": bool(getattr(app_etat.voix, "voices", [])),
             "dossier_assistants": str(r.dossier_assistants),
@@ -126,6 +146,41 @@ def creer_app(app_etat: Application) -> fastapi.FastAPI:
             return erreur(str(exc))
         return {"ok": True}
 
+    # ---------------------------------------------------------------- cerveau
+
+    @app.get("/api/cerveau")
+    async def cerveau():
+        import asyncio
+
+        from .cerveaux import resume_page
+
+        if app_etat.gestion is None:
+            return erreur("Réglage du cerveau indisponible.", 404)
+        return await asyncio.to_thread(resume_page, app_etat.gestion)
+
+    @app.get("/api/cerveau/etat")
+    async def etat_cerveau():
+        if app_etat.gestion is None:
+            return erreur("Réglage du cerveau indisponible.", 404)
+        return {**app_etat.gestion.etat, "description": app_etat.gestion.description()}
+
+    @app.post("/api/cerveau")
+    async def changer_cerveau(donnees: dict = fastapi.Body(...)):
+        from .modeles import Choix
+
+        gestion = app_etat.gestion
+        if gestion is None:
+            return erreur("Réglage du cerveau indisponible.", 404)
+        if gestion.etat.get("etape") in ("telechargement", "redemarrage", "demarrage"):
+            return erreur("Un changement de cerveau est déjà en cours.")
+        choix = Choix(ecoute=str(donnees.get("ecoute") or ""), redacteur=donnees.get("redacteur") or None,
+                      carte_graphique=bool(donnees.get("carte_graphique")))
+        try:
+            gestion.appliquer(choix)
+        except ValueError as exc:
+            return erreur(str(exc))
+        return {"ok": True}
+
     # --------------------------------------------------------- fichiers joints
 
     @app.post("/api/fichiers")
@@ -144,13 +199,14 @@ def creer_app(app_etat: Application) -> fastapi.FastAPI:
         return (app_etat.profils.lire(ident) or app_etat.profils.par_defaut()).id
 
     @app.post("/api/reunions")
-    async def importer_reunion(req: fastapi.Request, nom: str, assistant: str = ""):
+    async def importer_reunion(req: fastapi.Request, nom: str, assistant: str = "", utilisateur: str = ""):
         """Un fichier audio de réunion : transcription puis compte rendu, en arrière-plan."""
         import asyncio
 
         from .reunion import Reunion
 
-        reunion = Reunion(app_etat, assistant_valide(assistant), pathlib.Path(nom).name)
+        reunion = Reunion(app_etat, assistant_valide(assistant), pathlib.Path(nom).name,
+                          utilisateur_valide(utilisateur))
         app_etat.reunions[reunion.id] = reunion
         reunion.import_ = asyncio.create_task(reunion.importer(await req.body()))
         return reunion.etat()
@@ -163,7 +219,7 @@ def creer_app(app_etat: Application) -> fastapi.FastAPI:
         return reunion.etat()
 
     @app.websocket("/ws-reunion")
-    async def enregistrer_reunion(ws: fastapi.WebSocket, assistant: str = ""):
+    async def enregistrer_reunion(ws: fastapi.WebSocket, assistant: str = "", utilisateur: str = ""):
         """Enregistrement en direct : la page envoie le micro (PCM 16 bits, 16 kHz)."""
         import json
 
@@ -171,7 +227,7 @@ def creer_app(app_etat: Application) -> fastapi.FastAPI:
         from .reunion import Reunion
 
         await ws.accept()
-        reunion = Reunion(app_etat, assistant_valide(assistant), "enregistrement")
+        reunion = Reunion(app_etat, assistant_valide(assistant), "enregistrement", utilisateur_valide(utilisateur))
         app_etat.reunions[reunion.id] = reunion
         log.info("Enregistrement d'une réunion (%s).", reunion.id)
         await ws.send_text(json.dumps({"id": reunion.id}))
@@ -206,8 +262,8 @@ def creer_app(app_etat: Application) -> fastapi.FastAPI:
     # ---------------------------------------------------------- conversations
 
     @app.get("/api/conversations")
-    async def conversations():
-        return app_etat.conversations.lister()
+    async def conversations(utilisateur: str | None = None):
+        return app_etat.conversations.lister(utilisateur)
 
     @app.get("/api/conversations/{ident}")
     async def conversation(ident: str):
@@ -272,22 +328,61 @@ def creer_app(app_etat: Application) -> fastapi.FastAPI:
     async def nouvelle(donnees: dict = fastapi.Body(...)):
         ident = str(donnees.get("assistant") or "")
         profil = app_etat.profils.lire(ident) or app_etat.profils.par_defaut()
-        return app_etat.conversations.creer(profil.id).__dict__
+        return app_etat.conversations.creer(profil.id, utilisateur_valide(donnees.get("utilisateur"))).__dict__
+
+    # ---------------------------------------------------------- utilisateurs
+
+    def utilisateur_valide(ident) -> str:
+        return ident if ident and app_etat.utilisateurs.lire(str(ident)) else ""
+
+    @app.get("/api/utilisateurs")
+    async def utilisateurs():
+        return [u.en_dict() for u in app_etat.utilisateurs.lister()]
+
+    def utilisateur_depuis(donnees: dict, ident: str = "") -> Utilisateur:
+        return Utilisateur(id=ident, **{k: str(donnees.get(k) or "") for k in
+                                        ("prenom", "role", "presentation", "besoins", "preferences", "autres")})
+
+    @app.post("/api/utilisateurs")
+    async def creer_utilisateur(donnees: dict = fastapi.Body(...)):
+        try:
+            return app_etat.utilisateurs.enregistrer(utilisateur_depuis(donnees)).en_dict()
+        except ValueError as exc:
+            return erreur(str(exc))
+
+    @app.put("/api/utilisateurs/{ident}")
+    async def modifier_utilisateur(ident: str, donnees: dict = fastapi.Body(...)):
+        if app_etat.utilisateurs.lire(ident) is None:
+            return erreur("Profil introuvable.", 404)
+        try:
+            return app_etat.utilisateurs.enregistrer(utilisateur_depuis(donnees, ident)).en_dict()
+        except ValueError as exc:
+            return erreur(str(exc))
+
+    @app.delete("/api/utilisateurs/{ident}")
+    async def supprimer_utilisateur(ident: str):
+        try:
+            app_etat.utilisateurs.supprimer(ident)
+        except ValueError as exc:
+            return erreur(str(exc), 404)
+        return {"ok": True}
 
     # ------------------------------------------------------------ discussion
 
     @app.websocket("/ws/{ident}")
-    async def discussion(ws: fastapi.WebSocket, ident: str, assistant: str = ""):
+    async def discussion(ws: fastapi.WebSocket, ident: str, assistant: str = "", utilisateur: str = ""):
         if not re.fullmatch(r"[\w-]+", ident):
             await ws.close(code=4000)
             return
         conv = app_etat.conversations.charger(ident)
         if conv is None:  # nouvelle conversation (enregistrée au premier message)
             profil = app_etat.profils.lire(assistant) or app_etat.profils.par_defaut()
-            conv = Conversation(id=ident, assistant=profil.id)
+            conv = Conversation(id=ident, assistant=profil.id, utilisateur=utilisateur_valide(utilisateur))
         else:
             profil = app_etat.profils.lire(conv.assistant) or app_etat.profils.par_defaut()
-        log.info("Conversation « %s » avec « %s ».", conv.titre, profil.nom)
-        await deroule(app_etat, ws, conv, profil)
+        personne = app_etat.utilisateurs.lire(conv.utilisateur or utilisateur)
+        log.info("Conversation « %s » avec « %s »%s.", conv.titre, profil.nom,
+                 f" (pour {personne.prenom})" if personne else "")
+        await deroule(app_etat, ws, conv, profil, personne)
 
     return app

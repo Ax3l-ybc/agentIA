@@ -62,6 +62,7 @@ class Reglages:
     # Où sont rangés les assistants et les conversations
     dossier_assistants: pathlib.Path = DOSSIER_ASSISTANTS
     dossier_conversations: pathlib.Path = DOSSIER_DONNEES / "conversations"
+    dossier_utilisateurs: pathlib.Path = DOSSIER_DONNEES / "utilisateurs"
 
 
 _LIGNE_APOSTROPHES = re.compile(r"^(\s*[\w-]+:\s*)'(.*)'(\s*(?:#.*)?)$")

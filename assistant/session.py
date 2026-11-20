@@ -50,6 +50,7 @@ from .moteurs import float_vers_pcm16, pcm16_vers_float
 from .phrases import DecoupeurPhrases
 from .profils import Profil
 from .texte_voix import couper_phrases, nettoyer_pour_voix
+from .utilisateurs import Utilisateur, bloc_consignes
 
 if TYPE_CHECKING:
     from .application import Application
@@ -79,7 +80,7 @@ OUTILS_DOCUMENTS = [
 ]
 
 
-def construire_systeme(profil: Profil, documents: Documents | None) -> str:
+def construire_systeme(profil: Profil, documents: Documents | None, personne: Utilisateur | None = None) -> str:
     morceaux = [
         profil.consignes.strip(),
         "# Cadre (en plus des consignes ci-dessus)\n"
@@ -104,6 +105,8 @@ def construire_systeme(profil: Profil, documents: Documents | None) -> str:
                 "chercher_dans_documents, et citer leur nom. Tu ne peux pas les modifier.\n"
                 f"Liste des documents :\n{noms}"
             )
+    if personne is not None:  # en dernier : un petit modèle suit mieux ce qu'il a lu en dernier
+        morceaux.append(bloc_consignes(personne))
     return "\n\n".join(morceaux)
 
 
@@ -122,13 +125,13 @@ def historique_depuis(conv: Conversation) -> list[dict]:
 
 
 class Session:
-    def __init__(self, app: "Application", ws: fastapi.WebSocket, conv: Conversation, profil: Profil):
+    def __init__(self, app: "Application", ws: fastapi.WebSocket, conv: Conversation, profil: Profil,
+                 personne: Utilisateur | None = None):
         self.app, self.ws, self.conv, self.profil = app, ws, conv, profil
-        self.cerveau = app.cerveau
         dossier = profil.dossier()
         self.documents = Documents(dossier) if dossier is not None and dossier.is_dir() else None
         self.outils = OUTILS_DOCUMENTS if self.documents is not None else None
-        self.systeme = construire_systeme(profil, self.documents)
+        self.systeme = construire_systeme(profil, self.documents, personne)
         self.historique = historique_depuis(conv)
         self.transcriptions: set[asyncio.Task] = set()
         self.fin_voix = 0.0  # moment où la voix déjà envoyée aura fini d'être jouée
@@ -199,12 +202,22 @@ class Session:
             oublies += 1
         log.info("  mémoire de travail presque pleine : %d anciens échanges oubliés", oublies)
 
+    @property
+    def cerveau(self):
+        """Le cerveau qui écoute (voix, retranscriptions) : il peut changer (panneau « Cerveau »)."""
+        return self.app.cerveau
+
+    @property
+    def redacteur(self):
+        """Le cerveau qui répond aux messages écrits."""
+        return self.app.redacteur
+
     def prechauffer(self) -> None:
         """Fait lire à l'avance les consignes (et l'historique) : la première réponse est rapide."""
         messages = [{"role": "system", "content": self.systeme}, *self.historique,
                     {"role": "user", "content": DEBUT}]
         debut = time.monotonic()
-        for _ in self.cerveau.discuter_en_flux(messages, self.outils, max_mots=1):
+        for _ in self.redacteur.discuter_en_flux(messages, self.outils, max_mots=1):
             pass
         log.info("Consignes de « %s » lues à l'avance (%.1f s).", self.profil.nom, time.monotonic() - debut)
 
@@ -220,6 +233,10 @@ class Session:
         exécuté ni gardé tant que le feu n'est pas vert (la phrase était vraiment finie).
         """
         arret = arret or threading.Event()
+        gestion = self.app.gestion
+        if gestion is not None and not gestion.pret.is_set():  # le cerveau change (panneau « Cerveau »)
+            await self.envoyer({"type": "outil", "texte": "Le cerveau redémarre, la réponse arrive dans un instant…"})
+            await asyncio.to_thread(gestion.attendre)
         await self.attendre_transcriptions(15)
         vocal = audio is not None
         if vocal:
@@ -239,7 +256,9 @@ class Session:
         etat = {"premier": True, "commence": False, "code": False}
         try:
             for _ in range(MAX_TOURS_OUTILS + 1):
-                texte, appels, erreur = await self._flux(messages, debut, fin_phrase, etat,
+                # À la voix, le cerveau d'écoute répond ; à l'écrit, le rédacteur (s'il y en a un).
+                cerveau = self.cerveau if vocal else self.redacteur
+                texte, appels, erreur = await self._flux(cerveau, messages, debut, fin_phrase, etat,
                                                          vocal or lire, feu_vert, arret)
                 texte_total += texte
                 if feu_vert is not None:
@@ -306,14 +325,14 @@ class Session:
             await self.envoyer({"type": "debut"})
         await self.envoyer({"type": "morceau", "texte": texte})
 
-    async def _flux(self, messages, debut, fin_phrase, etat, dire_a_voix_haute, feu_vert, arret):
+    async def _flux(self, cerveau, messages, debut, fin_phrase, etat, dire_a_voix_haute, feu_vert, arret):
         """Une réponse en flux : chaque morceau est montré, chaque phrase dite si besoin."""
         boucle = asyncio.get_running_loop()
         file: asyncio.Queue = asyncio.Queue()
 
         def produire():
             try:
-                for m in self.cerveau.discuter_en_flux(list(messages), self.outils, arret=arret):
+                for m in cerveau.discuter_en_flux(list(messages), self.outils, arret=arret):
                     if arret.is_set():
                         break
                     boucle.call_soon_threadsafe(file.put_nowait, m)
@@ -425,14 +444,17 @@ class Session:
         self.abandonner_anticipe()
         if self.en_cours is not None:
             tache, arret = self.en_cours
-            self.cerveau.interrompre(arret)
+            for c in {id(self.cerveau): self.cerveau, id(self.redacteur): self.redacteur}.values():
+                if c is not None:  # (pas de cerveau pendant un redémarrage)
+                    c.interrompre(arret)
             tache.cancel()
         self.fin_voix = 0.0
 
     def abandonner_anticipe(self) -> None:
         if self.anticipe is not None:
             tache, _, arret, _, _ = self.anticipe
-            self.cerveau.interrompre(arret)  # coupe net la réponse préparée pour rien
+            if self.cerveau is not None:
+                self.cerveau.interrompre(arret)  # coupe net la réponse préparée pour rien
             tache.cancel()
             self.anticipe = None
 
@@ -560,9 +582,10 @@ def decrire_outil(nom: str, args: dict) -> str:
     return f"Outil {nom}…"
 
 
-async def deroule(app: "Application", ws: fastapi.WebSocket, conv: Conversation, profil: Profil) -> None:
+async def deroule(app: "Application", ws: fastapi.WebSocket, conv: Conversation, profil: Profil,
+                  personne: Utilisateur | None = None) -> None:
     await ws.accept()
-    session = Session(app, ws, conv, profil)
+    session = Session(app, ws, conv, profil, personne)
     await session.envoyer({"type": "config", "taux": app.voix.taux})
     # Le cerveau lit les consignes (et l'historique) pendant que la personne tape ou parle.
     asyncio.get_running_loop().run_in_executor(None, prechauffer_sans_erreur, session)

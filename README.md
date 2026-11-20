@@ -14,6 +14,10 @@ Une page comme ChatGPT ou Claude, mais **qui tourne entièrement sur votre ordin
   l'assistant la retranscrit et rédige le compte rendu (décisions, actions, questions en suspens).
 - **Vos conversations sont gardées** sur votre ordinateur : vous les retrouvez dans la colonne
   de gauche, pour les reprendre plus tard.
+- **Chacun son profil** : qui vous êtes, vos besoins particuliers, vos préférences. Tous les
+  assistants en tiennent compte, et chaque personne retrouve ses propres conversations.
+- **Un cerveau adapté au PC** : Gemma 4 E2B par défaut, E4B plus fin, et sur un PC puissant un
+  second modèle plus grand pour rédiger ; la carte graphique est utilisée si le PC en a une.
 - **Gratuit et 100 % local** : aucun abonnement, rien n'est envoyé sur internet (la connexion
   sert seulement à l'installation). Vos documents sont lus, **jamais modifiés**.
 
@@ -91,6 +95,44 @@ le site Hugging Face :
   conversation commence avec lui.
 - **Retrouver une conversation** : elles sont classées par date dans la colonne de gauche.
   Au survol, le crayon la renomme et la poubelle la supprime.
+
+## Votre profil
+
+En bas à gauche, cliquez sur **Mon profil** (ou sur « Présentez-vous… » dans la page d'accueil)
+et décrivez-vous : prénom, métier ou rôle, qui vous êtes, **vos besoins particuliers** (par
+exemple « je suis dyslexique : phrases courtes, sans jargon ») et **vos préférences** (« vouvoiement,
+réponses courtes avec un exemple concret »…). Tous les assistants en tiennent compte, et
+vos préférences passent avant leur ton habituel. Le profil s'applique aux nouvelles conversations.
+
+**Plusieurs personnes sur le même PC** : cliquez sur votre prénom en bas à gauche, puis
+**Ajouter une personne**. On passe de l'une à l'autre au même endroit ; chacun retrouve ses
+propres conversations. Les profils restent sur le PC
+(`C:\Users\VotreNom\MonAssistant\utilisateurs`) et ne sont **pas protégés par un mot de passe** :
+toute personne qui utilise ce PC peut les voir.
+
+## Le cerveau : choisir selon votre PC
+
+En bas à gauche, le bouton **Cerveau** montre le PC (mémoire, carte graphique) et les modèles
+possibles, avec celui qui est **conseillé pour ce PC** :
+
+| Modèle | Rôle | Taille | Pour quel PC |
+|---|---|---|---|
+| **Gemma 4 E2B** | converse, écoute la voix | 4 Go | tous ; le bon choix sans carte graphique |
+| **Gemma 4 E4B** | converse, écoute la voix | 6 Go | plus fin ; 32 Go de mémoire, ou une carte graphique de 8 Go |
+| **Gemma 4 12B** | rédige (n'écoute pas la voix) | 7 Go | une carte graphique de 16 Go |
+| **Gemma 4 26B-A4B** | rédige | 17 Go | 48 Go de mémoire, ou une grosse carte graphique |
+| **Gemma 4 31B** | rédige, le plus fin | 18 Go | une carte graphique de 24 Go |
+
+- **Le modèle « pour rédiger » est facultatif.** S'il est choisi, il répond aux messages écrits et
+  rédige les comptes rendus ; la voix et la transcription restent au modèle qui écoute.
+- **Utiliser la carte graphique** : à cocher si le PC en a une (NVIDIA, ou AMD Radeon RX / Intel Arc).
+  C'est bien plus rapide quand le modèle tient dans sa mémoire. `installer.bat` prépare déjà la
+  bonne version de llama.cpp s'il détecte une carte ; sinon elle est téléchargée en appliquant.
+- Cliquez sur **Appliquer** : les fichiers qui manquent sont téléchargés (la progression s'affiche),
+  puis le cerveau redémarre en une à deux minutes, sans fermer le programme. Si le nouveau choix ne
+  démarre pas (mémoire insuffisante…), l'ancien est remis en route et la page explique pourquoi.
+- Sur un simple processeur, E4B répond environ deux fois plus lentement qu'E2B (premier mot en
+  3 s au lieu de 1,5 s, mesuré sur un PC à 4 cœurs), mais suit mieux les consignes et le profil.
 
 ## Joindre un document
 
@@ -174,7 +216,8 @@ donnez le rôle dès la première phrase, et restez court.
 | « Le dossier de documents n'existe pas » | Vérifiez le chemin : copiez-le depuis la barre d'adresse de l'Explorateur Windows. |
 | L'assistant ne vous entend pas | Autorisez le micro dans le navigateur (icône à gauche de l'adresse) et vérifiez le micro choisi dans Windows. |
 | Il vous coupe pendant que vous réfléchissez | Augmentez `pause_fin_de_phrase_s` (par exemple `1.8`) dans `config.yaml`. |
-| Les réponses sont lentes | Fermez les programmes gourmands. Dans `config.yaml`, `modele: 'gemma-4-E2B-it-Q3_K_M.gguf'` est plus rapide (à télécharger avec `.venv\Scripts\python.exe -m assistant.telecharger gemma-4-E2B-it-Q3_K_M.gguf`). Avec une carte graphique, essayez `couches_gpu: 99`. |
+| Les réponses sont lentes | Fermez les programmes gourmands. Bouton **Cerveau** : revenez à Gemma 4 E2B, sans modèle de rédaction ; avec une carte graphique, cochez « Utiliser la carte graphique ». |
+| Le cerveau choisi ne démarre plus | Au lancement, l'assistant revient tout seul à Gemma 4 E2B. Pour tout remettre à zéro : supprimez `C:\Users\VotreNom\MonAssistant\cerveau.json`. |
 | La page ne s'ouvre pas toute seule | Copiez dans Chrome ou Edge l'adresse de la ligne « Prêt ! », sans fermer la fenêtre noire. |
 
 ### Si llama.cpp ne s'installe pas
@@ -217,6 +260,11 @@ assistant/
   profils.py          lecture et écriture des fichiers d'assistants
   conversations.py    l'historique des conversations
   documents.py        les documents d'un assistant (lecture seule)
+  utilisateurs.py     les profils des personnes (qui je suis, besoins, préférences)
+  modeles.py          les modèles possibles, le conseil selon le PC, le téléchargement
+  cerveaux.py         le cerveau d'écoute et le cerveau de rédaction, changement sans redémarrer
+  materiel.py         mémoire vive et carte graphique du PC
+  llamacpp_gpu.py     llama.cpp pour la carte graphique (CUDA ou Vulkan)
   fichiers.py         lecture des fichiers joints (PDF, Word, texte) et export Word
   reunion.py          comptes rendus de réunion (transcription par morceaux, puis rédaction)
   raccourci.ps1       création du raccourci sur le Bureau

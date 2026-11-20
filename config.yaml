@@ -12,16 +12,12 @@
 # Sans jeton, l'assistant marche quand même, mais seulement à l'écrit.
 jeton_huggingface: ''
 
-# --- Le cerveau : Gemma 4 E2B de Google, dans llama.cpp -----------------
+# --- Le cerveau : Gemma 4, dans llama.cpp ------------------------------
+#  Le modèle (E2B, E4B, un rédacteur plus grand) et l'usage de la carte graphique se
+#  choisissent dans la page : bouton « Cerveau », en bas à gauche.
 cerveau:
-  # Version du modèle (dans %USERPROFILE%\MonAssistant\modeles).
-  #   'gemma-4-E2B-it-Q4_K_M.gguf' (conseillé) ; 'gemma-4-E2B-it-Q3_K_M.gguf' plus rapide, un peu moins fin.
-  modele: 'gemma-4-E2B-it-Q4_K_M.gguf'
   # Mémoire de travail (en « jetons ») : 16384 permet de longues conversations et des documents.
   taille_contexte: 16384
-  # 0 = tout sur le processeur (le plus sûr). Avec une carte graphique bien reconnue,
-  # 99 met tout le modèle dessus (bien plus rapide).
-  couches_gpu: 0
   # Créativité des réponses : 0.3 = sobre et précis, 0.8 = plus inventif.
   temperature: 0.6
 

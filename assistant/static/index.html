@@ -122,6 +122,9 @@ svg { width: 18px; height: 18px; flex: none; }
 .contenu blockquote { border-left: 3px solid var(--bord); margin: 0 0 .8rem; padding-left: .9rem; color: var(--encre-douce); }
 .contenu a { color: var(--accent); }
 .contenu hr { border: none; border-top: 1px solid var(--bord); margin: 1rem 0; }
+.contenu table { border-collapse: collapse; margin: 0 0 .8rem; font-size: .92em; display: block; overflow-x: auto; max-width: 100%; }
+.contenu th, .contenu td { border: 1px solid var(--bord); padding: .35rem .6rem; text-align: left; vertical-align: top; }
+.contenu th { background: var(--code); font-weight: 600; }
 .curseur::after { content: "▍"; animation: clignote 1s steps(1) infinite; color: var(--encre-douce); }
 @keyframes clignote { 50% { opacity: 0; } }
 .note { color: var(--encre-douce); font-size: .85rem; margin: .4rem 0 .4rem 2.6rem; font-style: italic; }
@@ -201,6 +204,45 @@ svg { width: 18px; height: 18px; flex: none; }
 .apercu-reunion { font-style: italic; color: var(--encre-douce); font-size: .85rem; min-height: 2.5em; margin-top: .5rem; }
 @media (max-width: 760px) { .reunion-choix { grid-template-columns: 1fr; } }
 
+/* ------------------------------------------------------------ personne et cerveau (bas de la barre) */
+.bas-barre { border-top: 1px solid var(--bord); padding: .5rem; display: flex; flex-direction: column; gap: 2px; position: relative; }
+.ligne-bas { display: flex; align-items: center; gap: .55rem; padding: .45rem .55rem; border-radius: 8px; border: none;
+             background: none; text-align: left; width: 100%; }
+.ligne-bas:hover { background: var(--survol); }
+.ligne-bas .textes { flex: 1; min-width: 0; line-height: 1.25; }
+.ligne-bas .principal-l { display: block; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ligne-bas .secondaire { display: block; font-size: .75rem; color: var(--encre-douce); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.rond-personne { width: 30px; height: 30px; border-radius: 50%; display: grid; place-items: center; color: #fff;
+                 font-weight: 700; font-size: .85rem; flex: none; }
+.menu { position: absolute; left: .5rem; right: .5rem; bottom: calc(100% + 4px); background: var(--surface);
+        border: 1px solid var(--bord); border-radius: 12px; box-shadow: var(--ombre); padding: .35rem; display: none; z-index: 12; }
+.menu.visible { display: block; }
+.menu button { display: flex; align-items: center; gap: .55rem; width: 100%; border: none; background: none;
+               padding: .5rem .55rem; border-radius: 8px; text-align: left; }
+.menu button:hover { background: var(--survol); }
+.menu hr { border: none; border-top: 1px solid var(--bord); margin: .3rem 0; }
+.menu .coche { margin-left: auto; color: var(--accent); }
+.invitation-profil { margin-top: 1.2rem; }
+.invitation-profil button { border: 1px dashed var(--bord); background: none; border-radius: 10px; padding: .55rem .9rem; color: var(--encre-douce); }
+.invitation-profil button:hover { border-color: var(--accent); color: var(--accent); }
+
+.modele { display: flex; gap: .7rem; align-items: flex-start; border: 1px solid var(--bord); border-radius: 12px;
+          padding: .7rem .8rem; margin-bottom: .5rem; cursor: pointer; background: var(--fond); }
+.modele:hover { border-color: var(--encre-douce); }
+.modele.choisi { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent) inset; }
+.modele.impossible { opacity: .55; }
+.modele input { margin-top: .25rem; accent-color: var(--accent); }
+.modele .nom-modele { font-weight: 600; }
+.modele .desc { color: var(--encre-douce); font-size: .84rem; line-height: 1.4; margin-top: .15rem; }
+.badges { display: inline-flex; flex-wrap: wrap; gap: .3rem; margin-left: .4rem; vertical-align: 1px; }
+.badge { font-size: .7rem; padding: .1rem .45rem; border-radius: 99px; background: var(--survol); color: var(--encre-douce); font-weight: 500; }
+.badge.vert { background: rgba(46,107,94,.15); color: var(--accent); }
+.badge.rouge { background: rgba(179,38,30,.12); color: var(--danger); }
+.section-titre { font-weight: 600; margin: 1rem 0 .2rem; }
+.section-aide { color: var(--encre-douce); font-size: .84rem; margin-bottom: .6rem; line-height: 1.4; }
+.case { display: flex; gap: .55rem; align-items: flex-start; margin: .8rem 0 .3rem; }
+.case input { margin-top: .25rem; accent-color: var(--accent); }
+
 /* ------------------------------------------------------------ fenêtre de réglage */
 .voile { position: fixed; inset: 0; background: rgba(0,0,0,.4); display: none; align-items: center; justify-content: center; z-index: 20; padding: 1rem; }
 .voile.visible { display: flex; }
@@ -253,7 +295,19 @@ svg { width: 18px; height: 18px; flex: none; }
         </div>
         <div id="listeConversations"></div>
     </div>
-    <div class="pied-barre">Tout fonctionne sur cet ordinateur, sans internet.<br><span id="infoModele"></span></div>
+    <div class="bas-barre">
+        <div class="menu" id="menuPersonne"></div>
+        <button class="ligne-bas" id="boutonCerveau" title="Choisir le cerveau de l'assistant">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4" width="16" height="16" rx="2"/><rect x="9" y="9" width="6" height="6"/><path d="M9 1v3M15 1v3M9 20v3M15 20v3M20 9h3M20 14h3M1 9h3M1 14h3"/></svg>
+            <span class="textes"><span class="principal-l">Cerveau</span><span class="secondaire" id="infoModele"></span></span>
+        </button>
+        <button class="ligne-bas" id="boutonPersonne" title="Votre profil, ou changer de personne">
+            <span class="rond-personne" id="rondPersonne">?</span>
+            <span class="textes"><span class="principal-l" id="nomPersonne">Mon profil</span>
+                <span class="secondaire" id="rolePersonne">Présentez-vous à l'assistant</span></span>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="m7 15 5 5 5-5M7 9l5-5 5 5"/></svg>
+        </button>
+    </div>
 </aside>
 
 <main id="principal">
@@ -343,6 +397,62 @@ svg { width: 18px; height: 18px; flex: none; }
     </div>
 </div>
 
+<div class="voile" id="voilePersonne">
+    <form class="fenetre" id="formPersonne" autocomplete="off">
+        <header id="titrePersonne">Mon profil</header>
+        <div class="corps">
+            <p class="texte-doux" style="margin-top:0">Tous les assistants en tiennent compte pour vous répondre.
+            Ces informations restent sur ce PC (elles ne sont pas protégées par un mot de passe :
+            toute personne qui utilise ce PC peut les voir).</p>
+            <label class="champ"><span>Prénom</span><input id="pPrenom" required maxlength="40"></label>
+            <label class="champ"><span>Métier ou rôle</span><input id="pRole" maxlength="200"
+                placeholder="Ex. : assistante de direction dans une PME de 40 personnes"></label>
+            <label class="champ"><span>Qui je suis</span><textarea id="pPresentation" style="min-height:80px"
+                placeholder="Ex. : je gère les plannings et la relation avec les clients ; je débute avec les outils d'IA."></textarea></label>
+            <label class="champ"><span>Mes besoins particuliers</span><textarea id="pBesoins" style="min-height:70px"
+                placeholder="Ex. : je suis dyslexique, j'ai besoin de phrases courtes et sans jargon."></textarea>
+                <small>Accessibilité, contraintes, façon d'apprendre… Facultatif.</small></label>
+            <label class="champ"><span>Mes préférences</span><textarea id="pPreferences" style="min-height:70px"
+                placeholder="Ex. : vouvoiement, réponses courtes avec des listes, toujours un exemple concret."></textarea>
+                <small>Ton, tutoiement ou vouvoiement, longueur des réponses, présentation…</small></label>
+            <label class="champ"><span>À savoir aussi</span><textarea id="pAutres" style="min-height:70px"
+                placeholder="Ex. : mon entreprise vend du matériel médical ; mes projets en cours ; les outils que j'utilise."></textarea></label>
+            <div class="erreur-form" id="erreurPersonne"></div>
+        </div>
+        <footer>
+            <button type="button" class="bouton danger" id="supprimerPersonne">Supprimer ce profil</button>
+            <span class="espace"></span>
+            <button type="button" class="bouton" id="annulerPersonne">Annuler</button>
+            <button type="submit" class="bouton principal">Enregistrer</button>
+        </footer>
+    </form>
+</div>
+
+<div class="voile" id="voileCerveau">
+    <div class="fenetre">
+        <header>Cerveau de l'assistant</header>
+        <div class="corps">
+            <p class="texte-doux" id="cerveauMateriel" style="margin-top:0">Analyse du PC…</p>
+            <div class="section-titre">Pour converser et écouter la voix</div>
+            <div class="section-aide">Ce modèle répond à la voix et retranscrit les réunions.</div>
+            <div id="listeEcoute"></div>
+            <div class="section-titre">Pour rédiger (facultatif)</div>
+            <div class="section-aide">Un modèle plus grand rédige les réponses écrites et les comptes rendus,
+            avec plus de finesse. Il demande beaucoup de mémoire, ou une carte graphique.</div>
+            <div id="listeRedaction"></div>
+            <label class="case" id="caseCarte"><input type="checkbox" id="carteGraphique">
+                <span><strong>Utiliser la carte graphique</strong><br><span class="texte-doux" id="aideCarte"></span></span></label>
+            <p class="texte-doux" id="cerveauMessage" style="min-height:1.4em"></p>
+            <div class="barre-progres" id="cerveauBarre" style="display:none"><div></div></div>
+        </div>
+        <footer>
+            <span class="espace"></span>
+            <button type="button" class="bouton" id="fermerCerveau">Fermer</button>
+            <button type="button" class="bouton principal" id="appliquerCerveau" disabled>Appliquer</button>
+        </footer>
+    </div>
+</div>
+
 <div class="voile" id="voile">
     <form class="fenetre" id="formAssistant" autocomplete="off">
         <header id="titreForm">Modifier l'assistant</header>
@@ -426,6 +536,16 @@ function markdown(source) {
                 html += `<li>${enLigne(lignes[i].replace(/^\s*([-*•]|\d+[.)])\s+/, ""))}</li>`; i++;
             }
             html += `</${balise}>`;
+            continue;
+        }
+        if (/^\s*\|.*\|\s*$/.test(l) && i + 1 < lignes.length && /^\s*\|?[\s:|-]+\|?\s*$/.test(lignes[i + 1]) && lignes[i + 1].includes("-")) {
+            const cellules = (ligne) => ligne.trim().replace(/^\||\|$/g, "").split("|").map(c => enLigne(c.trim()));
+            html += "<table><thead><tr>" + cellules(l).map(c => `<th>${c}</th>`).join("") + "</tr></thead><tbody>";
+            i += 2;
+            while (i < lignes.length && /^\s*\|.*\|\s*$/.test(lignes[i])) {
+                html += "<tr>" + cellules(lignes[i]).map(c => `<td>${c}</td>`).join("") + "</tr>"; i++;
+            }
+            html += "</tbody></table>";
             continue;
         }
         if (/^>\s?/.test(l)) {
@@ -535,7 +655,10 @@ function afficherConversations() {
 }
 
 async function chargerAssistants() { assistants = await api("api/assistants"); afficherAssistants(); }
-async function chargerConversations() { conversations = await api("api/conversations"); afficherConversations(); }
+async function chargerConversations() {
+    conversations = await api("api/conversations" + (personne ? `?utilisateur=${encodeURIComponent(personne.id)}` : ""));
+    afficherConversations();
+}
 
 // ===========================================================================
 // Affichage de la conversation
@@ -557,6 +680,11 @@ function afficherAccueil() {
     p.textContent = (a?.description ? a.description + " " : "") +
         (infos.voix_disponible ? "Écrivez-moi, ou cliquez sur le micro pour me parler." : "Écrivez-moi votre message.");
     bloc.append(p);
+    if (!personne) {
+        const inv = document.createElement("div"); inv.className = "invitation-profil";
+        const b = document.createElement("button"); b.textContent = "Présentez-vous pour que l'assistant vous connaisse";
+        b.onclick = () => ouvrirProfil(null); inv.append(b); bloc.append(inv);
+    }
     colonne.append(bloc);
 }
 
@@ -668,7 +796,8 @@ function fermerLien() {
 
 function ouvrirLien() {
     const proto = location.protocol === "https:" ? "wss:" : "ws:";
-    ws = new WebSocket(`${proto}//${location.host}/ws/${conv.id}?assistant=${encodeURIComponent(conv.assistant)}`);
+    ws = new WebSocket(`${proto}//${location.host}/ws/${conv.id}?assistant=${encodeURIComponent(conv.assistant)}` +
+                       `&utilisateur=${encodeURIComponent(personne?.id || "")}`);
     ws.binaryType = "arraybuffer";
     ws.onmessage = surMessage;
     ws.onclose = () => { ws = null; arreterMicro(); finGeneration(); };
@@ -676,7 +805,8 @@ function ouvrirLien() {
 
 async function nouvelleConversation(idAssistant) {
     fermerLien();
-    conv = await api("api/conversations", { method: "POST", body: JSON.stringify({ assistant: idAssistant || conv?.assistant || "" }) });
+    conv = await api("api/conversations", { method: "POST", body: JSON.stringify({
+        assistant: idAssistant || conv?.assistant || "", utilisateur: personne?.id || "" }) });
     afficherConversation();
     ouvrirLien();
     fermerBarreMobile();
@@ -1007,7 +1137,8 @@ async function demarrerEnregistrement() {
     const capteurR = new AudioWorkletNode(contexteAudio, "capteur");
     contexteAudio.createMediaStreamSource(flux).connect(capteurR);
     const proto = location.protocol === "https:" ? "wss:" : "ws:";
-    const lien = new WebSocket(`${proto}//${location.host}/ws-reunion?assistant=${encodeURIComponent(conv?.assistant || "")}`);
+    const lien = new WebSocket(`${proto}//${location.host}/ws-reunion?assistant=${encodeURIComponent(conv?.assistant || "")}` +
+                               `&utilisateur=${encodeURIComponent(personne?.id || "")}`);
     lien.binaryType = "arraybuffer";
     reunion = { ws: lien, flux, capteur: capteurR, debut: Date.now() };
     lien.onmessage = (e) => { const d = JSON.parse(e.data); if (d.id) { reunion.id = d.id; suivreReunion(); } };
@@ -1065,7 +1196,8 @@ $("fichierReunion").onchange = async (e) => {
     afficherSuivi(`Envoi de « ${f.name} »…`);
     $("reunionChrono").textContent = "";
     try {
-        const r = await fetch(`api/reunions?nom=${encodeURIComponent(f.name)}&assistant=${encodeURIComponent(conv?.assistant || "")}`,
+        const r = await fetch(`api/reunions?nom=${encodeURIComponent(f.name)}&assistant=${encodeURIComponent(conv?.assistant || "")}` +
+                              `&utilisateur=${encodeURIComponent(personne?.id || "")}`,
                               { method: "POST", body: f });
         const d = await r.json();
         if (!r.ok) throw new Error(d.erreur || "Envoi impossible");
@@ -1138,6 +1270,204 @@ $("supprimerAssistant").onclick = async () => {
 };
 
 // ===========================================================================
+// Les personnes : profil (qui je suis, besoins, préférences) et changement de personne
+// ===========================================================================
+let personnes = [], personne = null;
+
+function afficherPersonne() {
+    const rond = $("rondPersonne");
+    if (personne) {
+        rond.textContent = personne.prenom.charAt(0).toUpperCase(); rond.style.background = couleur(personne.prenom);
+        $("nomPersonne").textContent = personne.prenom;
+        $("rolePersonne").textContent = personne.role || "Mon profil";
+    } else {
+        rond.textContent = "?"; rond.style.background = "var(--encre-douce)";
+        $("nomPersonne").textContent = "Mon profil";
+        $("rolePersonne").textContent = "Présentez-vous à l'assistant";
+    }
+}
+
+async function chargerPersonnes() {
+    personnes = await api("api/utilisateurs");
+    let memo = null;
+    try { memo = localStorage.getItem("personne"); } catch (e) {}
+    personne = personnes.find(p => p.id === memo) || personnes[0] || null;
+    afficherPersonne();
+}
+
+async function choisirPersonne(p) {
+    personne = p;
+    try { localStorage.setItem("personne", p ? p.id : ""); } catch (e) {}
+    afficherPersonne();
+    $("menuPersonne").classList.remove("visible");
+    await chargerConversations();
+    await nouvelleConversation(conv?.assistant);
+}
+
+function ouvrirMenuPersonne() {
+    if (!personnes.length) { ouvrirProfil(null); return; }
+    const menu = $("menuPersonne"); menu.innerHTML = "";
+    for (const p of personnes) {
+        const b = document.createElement("button");
+        const r = document.createElement("span"); r.className = "rond-personne"; r.style.cssText = `width:24px;height:24px;font-size:.75rem;background:${couleur(p.prenom)}`;
+        r.textContent = p.prenom.charAt(0).toUpperCase();
+        b.append(r, document.createTextNode(p.prenom));
+        if (personne && p.id === personne.id) { const c = document.createElement("span"); c.className = "coche"; c.textContent = "✓"; b.append(c); }
+        b.onclick = () => choisirPersonne(p);
+        menu.append(b);
+    }
+    menu.append(document.createElement("hr"));
+    const modifier = document.createElement("button"); modifier.textContent = "Modifier mon profil";
+    modifier.onclick = () => { menu.classList.remove("visible"); ouvrirProfil(personne); };
+    const ajouter = document.createElement("button"); ajouter.textContent = "Ajouter une personne";
+    ajouter.onclick = () => { menu.classList.remove("visible"); ouvrirProfil(null); };
+    menu.append(modifier, ajouter);
+    menu.classList.toggle("visible");
+}
+$("boutonPersonne").onclick = (e) => { e.stopPropagation(); ouvrirMenuPersonne(); };
+document.addEventListener("click", (e) => { if (!$("menuPersonne").contains(e.target)) $("menuPersonne").classList.remove("visible"); });
+
+let personneEditee = null;
+function ouvrirProfil(p) {
+    personneEditee = p || null;
+    $("titrePersonne").textContent = p ? `Profil de ${p.prenom}` : (personnes.length ? "Nouvelle personne" : "Mon profil");
+    for (const [champ, cle] of [["pPrenom", "prenom"], ["pRole", "role"], ["pPresentation", "presentation"],
+                                ["pBesoins", "besoins"], ["pPreferences", "preferences"], ["pAutres", "autres"]]) {
+        $(champ).value = p?.[cle] || "";
+    }
+    $("supprimerPersonne").style.visibility = p ? "visible" : "hidden";
+    $("erreurPersonne").textContent = "";
+    $("voilePersonne").classList.add("visible");
+    $("pPrenom").focus();
+}
+function fermerProfil() { $("voilePersonne").classList.remove("visible"); }
+$("annulerPersonne").onclick = fermerProfil;
+$("voilePersonne").addEventListener("mousedown", (e) => { if (e.target === $("voilePersonne")) fermerProfil(); });
+$("formPersonne").onsubmit = async (e) => {
+    e.preventDefault();
+    const donnees = { prenom: $("pPrenom").value, role: $("pRole").value, presentation: $("pPresentation").value,
+                      besoins: $("pBesoins").value, preferences: $("pPreferences").value, autres: $("pAutres").value };
+    try {
+        const p = personneEditee
+            ? await api(`api/utilisateurs/${personneEditee.id}`, { method: "PUT", body: JSON.stringify(donnees) })
+            : await api("api/utilisateurs", { method: "POST", body: JSON.stringify(donnees) });
+        fermerProfil();
+        personnes = await api("api/utilisateurs");
+        // Le profil s'applique à une nouvelle conversation (les consignes sont lues au début).
+        await choisirPersonne(personnes.find(x => x.id === p.id));
+    } catch (err) { $("erreurPersonne").textContent = err.message; }
+};
+$("supprimerPersonne").onclick = async () => {
+    if (!personneEditee || !confirm(`Supprimer le profil de ${personneEditee.prenom} ? Ses conversations restent dans le dossier des conversations.`)) return;
+    try {
+        await api(`api/utilisateurs/${personneEditee.id}`, { method: "DELETE" });
+        fermerProfil();
+        personnes = await api("api/utilisateurs");
+        await choisirPersonne(personnes[0] || null);
+    } catch (err) { $("erreurPersonne").textContent = err.message; }
+};
+
+// ===========================================================================
+// Le cerveau : modèle d'écoute, modèle de rédaction, carte graphique
+// ===========================================================================
+let cerveau = null, choixCerveau = null, suiviCerveau = null;
+const PLACES = { carte: ["Sur la carte graphique", "vert"], processeur: ["Sur le processeur", ""], trop_gros: ["Trop gros pour ce PC", "rouge"] };
+
+function carteModele(m, nom, valeur, choisi, conseille) {
+    const el = document.createElement("label");
+    el.className = "modele" + (choisi ? " choisi" : "") + (m && m.place === "trop_gros" ? " impossible" : "");
+    const radio = document.createElement("input"); radio.type = "radio"; radio.name = nom; radio.checked = choisi;
+    radio.onchange = () => { choixCerveau[nom] = valeur; afficherCerveau(); };
+    const texte = document.createElement("div");
+    const titre = document.createElement("div");
+    const n = document.createElement("span"); n.className = "nom-modele"; n.textContent = m ? m.nom : "Aucun : le même modèle rédige"; titre.append(n);
+    const badges = document.createElement("span"); badges.className = "badges";
+    const badge = (t, c = "") => { const b = document.createElement("span"); b.className = "badge " + c; b.textContent = t; badges.append(b); };
+    if (conseille) badge("Conseillé pour ce PC", "vert");
+    if (m) {
+        badge(m.installe ? "Installé" : `À télécharger (${String(m.taille_go).replace(".", ",")} Go)`);
+        const [t, c] = PLACES[m.place] || ["", ""]; if (t) badge(t, c);
+    }
+    titre.append(badges); texte.append(titre);
+    const d = document.createElement("div"); d.className = "desc";
+    d.textContent = m ? m.description : "Plus simple et plus léger : conseillé sans carte graphique.";
+    texte.append(d);
+    el.append(radio, texte);
+    return el;
+}
+
+function afficherCerveau() {
+    const mat = cerveau.materiel;
+    const cartes = mat.cartes.map(c => `${c.nom}${c.memoire_go ? ` (${String(c.memoire_go).replace(".", ",")} Go)` : ""}`).join(", ");
+    $("cerveauMateriel").textContent = `Ce PC : ${String(mat.ram_go).replace(".", ",")} Go de mémoire vive, ${mat.coeurs} cœurs. ` +
+        (cartes ? `Carte graphique : ${cartes}.` : "Pas de carte graphique utilisable : tout tourne sur le processeur.");
+    const ecoute = $("listeEcoute"), redaction = $("listeRedaction");
+    ecoute.innerHTML = ""; redaction.innerHTML = "";
+    for (const m of cerveau.catalogue.filter(m => m.ecoute))
+        ecoute.append(carteModele(m, "ecoute", m.id, choixCerveau.ecoute === m.id, cerveau.conseil.ecoute === m.id));
+    redaction.append(carteModele(null, "redacteur", null, !choixCerveau.redacteur, !cerveau.conseil.redacteur));
+    for (const m of cerveau.catalogue.filter(m => !m.ecoute))
+        redaction.append(carteModele(m, "redacteur", m.id, choixCerveau.redacteur === m.id, cerveau.conseil.redacteur === m.id));
+    $("caseCarte").style.display = mat.cartes.length ? "" : "none";
+    $("carteGraphique").checked = !!choixCerveau.carte_graphique;
+    $("aideCarte").textContent = cerveau.carte_graphique_installee
+        ? "Bien plus rapide quand le modèle tient dans la mémoire de la carte."
+        : "llama.cpp pour la carte graphique sera téléchargé (quelques centaines de Mo).";
+    const change = JSON.stringify(choixCerveau) !== JSON.stringify(cerveau.choix);
+    const occupe = ["telechargement", "redemarrage", "demarrage"].includes(cerveau.etat.etape);
+    $("appliquerCerveau").disabled = !change || occupe;
+    afficherEtatCerveau(cerveau.etat);
+}
+
+function afficherEtatCerveau(e) {
+    $("cerveauMessage").textContent = e.etape === "pret" ? "" : (e.message || "");
+    const barre = $("cerveauBarre"), p = e.progression;
+    barre.style.display = p ? "" : "none";
+    if (p) barre.firstElementChild.style.width = p.total ? `${Math.round(100 * p.recus / p.total)}%` : "0";
+    if (p && p.total) $("cerveauMessage").textContent = `${e.message} — ${(p.recus / 1e9).toFixed(1).replace(".", ",")} / ${(p.total / 1e9).toFixed(1).replace(".", ",")} Go`;
+}
+
+async function ouvrirCerveau() {
+    if (!infos.reglage_cerveau) return;
+    $("voileCerveau").classList.add("visible");
+    cerveau = await api("api/cerveau");
+    choixCerveau = { ...cerveau.choix };
+    afficherCerveau();
+    if (["telechargement", "redemarrage", "demarrage"].includes(cerveau.etat.etape)) suivreCerveau();
+}
+$("boutonCerveau").onclick = ouvrirCerveau;
+$("carteGraphique").onchange = (e) => { choixCerveau.carte_graphique = e.target.checked; afficherCerveau(); };
+$("fermerCerveau").onclick = () => $("voileCerveau").classList.remove("visible");
+$("appliquerCerveau").onclick = async () => {
+    const trop = [choixCerveau.ecoute, choixCerveau.redacteur].filter(Boolean)
+        .map(id => cerveau.catalogue.find(m => m.id === id)).filter(m => m.place === "trop_gros");
+    if (trop.length && !confirm(`${trop.map(m => m.nom).join(", ")} semble trop gros pour ce PC : il risque de ne pas démarrer, ou d'être très lent. Essayer quand même ?`)) return;
+    try {
+        await api("api/cerveau", { method: "POST", body: JSON.stringify(choixCerveau) });
+        $("appliquerCerveau").disabled = true;
+        suivreCerveau();
+    } catch (err) { $("cerveauMessage").textContent = err.message; }
+};
+
+function suivreCerveau() {
+    clearInterval(suiviCerveau);
+    suiviCerveau = setInterval(async () => {
+        let e; try { e = await api("api/cerveau/etat"); } catch (err) { return; }
+        afficherEtatCerveau(e);
+        $("infoModele").textContent = e.etape === "pret" ? e.description : (e.message || "");
+        if (e.etape === "pret" || e.etape === "erreur") {
+            clearInterval(suiviCerveau);
+            infos.modele = e.description;
+            if ($("voileCerveau").classList.contains("visible")) {
+                cerveau = await api("api/cerveau"); choixCerveau = { ...cerveau.choix }; afficherCerveau();
+                if (e.etape === "erreur") $("cerveauMessage").textContent = e.message;
+                else $("cerveauMessage").textContent = `Prêt : ${e.description}.`;
+            }
+        }
+    }, 1000);
+}
+
+// ===========================================================================
 // Petits écrans et démarrage
 // ===========================================================================
 $("ouvrirBarre").onclick = () => $("barre").classList.toggle("ouverte");
@@ -1146,7 +1476,9 @@ $("nouvelle").onclick = () => nouvelleConversation(conv?.assistant);
 
 (async function demarrer() {
     infos = await api("api/infos");
-    $("infoModele").textContent = `Cerveau : ${infos.modele.replace(/\.gguf$/, "")}`;
+    $("infoModele").textContent = infos.modele.replace(/\.gguf$/, "");
+    if (!infos.reglage_cerveau) $("boutonCerveau").disabled = true;
+    await chargerPersonnes();
     if (!infos.voix_disponible) { $("lire").style.display = "none"; }
     majBoutonLire();
     await chargerAssistants();

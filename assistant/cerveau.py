@@ -209,11 +209,18 @@ class CerveauLlamaCpp:
 # ---------------------------------------------------------------------------
 
 
-def trouver_llama_server(chemin_reglage: str) -> pathlib.Path | None:
-    """Cherche llama-server : réglage, PATH, puis dossier des liens de winget (Windows)."""
+def trouver_llama_server(chemin_reglage: str, carte_graphique: bool = False) -> pathlib.Path | None:
+    """Cherche llama-server : réglage, version pour la carte graphique (si elle est utilisée),
+    PATH, puis dossier des liens de winget (Windows)."""
     candidats = []
     if chemin_reglage:
         candidats.append(pathlib.Path(os.path.expandvars(os.path.expanduser(chemin_reglage))))
+    if carte_graphique:
+        from .llamacpp_gpu import serveur_installe
+
+        gpu = serveur_installe()
+        if gpu is not None:
+            candidats.append(gpu)
     trouve = shutil.which("llama-server")
     if trouve:
         candidats.append(pathlib.Path(trouve))
@@ -234,53 +241,70 @@ def son_de_test(secondes: float = 1.0) -> bytes:
     return wav_16k((0.05 * np.sin(2 * np.pi * 220 * t)).astype(np.float32))
 
 
-class ServeurLlamaCpp:
-    """Fait tourner llama-server avec Gemma 4 E2B, et le redémarre s'il s'arrête."""
+_PAR_DEFAUT = object()
 
-    def __init__(self, r, journal: pathlib.Path):
+
+class ServeurLlamaCpp:
+    """Fait tourner llama-server avec un modèle Gemma 4, et le redémarre s'il s'arrête.
+
+    Par défaut, le modèle et le module audio sont ceux des réglages. Le gestionnaire des
+    cerveaux (cerveaux.py) en lance un pour l'écoute et, si on le choisit, un second, sans
+    module audio, pour la rédaction.
+    """
+
+    def __init__(self, r, journal: pathlib.Path, modele: pathlib.Path | None = None, mmproj=_PAR_DEFAUT,
+                 port: int | None = None, couches_gpu: int | None = None, nom: str = "cerveau"):
         self.r = r
         self.journal = journal
+        self.nom = nom
+        self.modele = modele or r.llamacpp_modele
+        self.mmproj = r.llamacpp_mmproj if mmproj is _PAR_DEFAUT else mmproj  # None : texte seulement
+        self.port = port or r.llamacpp_port
+        self.couches_gpu = r.llamacpp_couches_gpu if couches_gpu is None else couches_gpu
         self.processus: subprocess.Popen | None = None
         from .reglages import DOSSIER_DONNEES
 
-        self.dossier_memoire = DOSSIER_DONNEES / "memoire"
-        self.cerveau = CerveauLlamaCpp(f"http://127.0.0.1:{r.llamacpp_port}", r.temperature)
+        self.dossier_memoire = DOSSIER_DONNEES / "memoire" / nom
+        self.cerveau = CerveauLlamaCpp(f"http://127.0.0.1:{self.port}", r.temperature)
 
     def commande(self, executable: pathlib.Path) -> list[str]:
         r = self.r
         return [
             str(executable),
-            "-m", str(r.llamacpp_modele),
-            "--mmproj", str(r.llamacpp_mmproj),
+            "-m", str(self.modele),
+            *(["--mmproj", str(self.mmproj)] if self.mmproj else []),
             "-c", str(r.llamacpp_contexte),
             "-np", "1",                         # une seule conversation à la fois
             "--slot-save-path", str(self.dossier_memoire),  # sauvegarde de la mémoire (voir plus haut)
-            "-ngl", str(r.llamacpp_couches_gpu),
+            "-ngl", str(self.couches_gpu),
             "--reasoning", "off",               # pas de « réflexion » silencieuse
             "--jinja",                          # modèle de conversation de Gemma 4 (outils)
             "-fa", "auto",
             "--cache-ram", "0",
             "--host", "127.0.0.1",
-            "--port", str(r.llamacpp_port),
+            "--port", str(self.port),
         ]
 
     def demarrer(self) -> None:
         r = self.r
-        executable = trouver_llama_server(r.llamacpp_serveur)
+        executable = trouver_llama_server(r.llamacpp_serveur, carte_graphique=self.couches_gpu > 0)
         if executable is None:
             raise ErreurCerveau(
                 "llama.cpp est introuvable. Relancez installer.bat (il l'installe avec "
                 "« winget install llama.cpp »), puis fermez et rouvrez lancer.bat."
             )
-        for nom, chemin in (("le modèle", r.llamacpp_modele), ("le module audio", r.llamacpp_mmproj)):
+        fichiers = [("le modèle", self.modele)] + ([("le module audio", self.mmproj)] if self.mmproj else [])
+        for nom, chemin in fichiers:
             if not chemin.is_file():
-                raise ErreurCerveau(f"Fichier introuvable pour {nom} : {chemin}\nRelancez installer.bat.")
+                raise ErreurCerveau(f"Fichier introuvable pour {nom} : {chemin}\n"
+                                    "Téléchargez-le depuis la page (bouton « Cerveau ») ou relancez installer.bat.")
         self.journal.parent.mkdir(parents=True, exist_ok=True)
         self.dossier_memoire.mkdir(parents=True, exist_ok=True)
         options = {}
         if sys.platform == "win32":
             options["creationflags"] = subprocess.CREATE_NO_WINDOW
-        log.info("Démarrage de llama.cpp (%s)…", executable)
+        log.info("Démarrage de llama.cpp pour %s : %s%s (%s)…", self.nom, self.modele.name,
+                 " sur la carte graphique" if self.couches_gpu > 0 else "", executable)
         depuis = self.journal.stat().st_size if self.journal.exists() else 0
         self.processus = subprocess.Popen(
             self.commande(executable), stdout=open(self.journal, "ab"), stderr=subprocess.STDOUT,
@@ -295,10 +319,14 @@ class ServeurLlamaCpp:
                 self.arreter()
                 raise ErreurCerveau("llama.cpp met plus de 10 minutes à démarrer.")
             time.sleep(1)
-        log.info("Cerveau prêt en %.0f s.", time.monotonic() - debut)
+        log.info("Cerveau (%s) prêt en %.0f s.", self.nom, time.monotonic() - debut)
         debut = time.monotonic()
-        self.cerveau.rediger([self.cerveau.message_vocal(son_de_test(), "Dis seulement : prêt.")])
-        log.info("Écoute vérifiée (première réponse en %.1f s).", time.monotonic() - debut)
+        if self.mmproj:
+            self.cerveau.rediger([self.cerveau.message_vocal(son_de_test(), "Dis seulement : prêt.")])
+            log.info("Écoute vérifiée (première réponse en %.1f s).", time.monotonic() - debut)
+        else:
+            self.cerveau.rediger([{"role": "user", "content": "Dis seulement : prêt."}])
+            log.info("Rédaction vérifiée (première réponse en %.1f s).", time.monotonic() - debut)
 
     def _lire_journal(self, depuis: int) -> str:
         try:

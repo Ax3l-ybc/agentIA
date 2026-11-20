@@ -54,19 +54,32 @@ def main() -> int:
     if port_cerveau is not None:
         reglages.llamacpp_port = port_cerveau
 
-    from .cerveau import ErreurCerveau, ServeurLlamaCpp
+    from .cerveau import ErreurCerveau
+    from .cerveaux import GestionCerveaux
+    from .modeles import Choix
 
-    log.info("Étape 1/3 : le cerveau (Gemma 4 dans llama.cpp, %s).", reglages.llamacpp_modele.name)
-    serveur = ServeurLlamaCpp(reglages, DOSSIER_DONNEES / "llama-server.log")
+    gestion = GestionCerveaux(reglages)
+    log.info("Étape 1/3 : le cerveau (%s).", gestion.description())
     try:
-        serveur.demarrer()
+        gestion.demarrer()
     except ErreurCerveau as exc:
-        log.error("PROBLÈME AVEC LE CERVEAU :\n%s", exc)
-        return 1
+        if gestion.choix == Choix():
+            log.error("PROBLÈME AVEC LE CERVEAU :\n%s", exc)
+            return 1
+        # Le cerveau choisi dans la page ne démarre plus : on revient au choix de base.
+        log.error("Le cerveau choisi (%s) n'a pas démarré :\n%s\nRetour au cerveau de base.",
+                  gestion.description(), exc)
+        gestion.arreter()
+        gestion.choix = Choix()
+        try:
+            gestion.demarrer()
+        except ErreurCerveau as exc2:
+            log.error("PROBLÈME AVEC LE CERVEAU :\n%s", exc2)
+            return 1
     try:
-        return lancer_application(reglages, serveur, log)
+        return lancer_application(reglages, gestion, log)
     finally:
-        serveur.arreter()
+        gestion.arreter()
 
 
 def charger_voix(reglages, log):
@@ -103,7 +116,7 @@ class SansVoix:
         return iter(())
 
 
-def lancer_application(reglages, serveur, log) -> int:
+def lancer_application(reglages, gestion, log) -> int:
     import uvicorn
 
     from .application import Application, creer_app
@@ -118,7 +131,7 @@ def lancer_application(reglages, serveur, log) -> int:
     except Exception as exc:  # noqa: BLE001
         log.warning("Détecteur de parole indisponible (%s) : détection simplifiée.", exc)
         detecteur = detecteur_simple
-    etat = Application(reglages, serveur.cerveau, voix, detecteur, serveur.reparer)
+    etat = Application(reglages, gestion, voix, detecteur)
     noms = ", ".join(p.nom for p in etat.profils.lister())
     log.info("Assistants disponibles : %s (dossier %s).", noms, reglages.dossier_assistants)
     log.info("Les conversations sont gardées dans %s.", reglages.dossier_conversations)

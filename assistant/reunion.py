@@ -116,8 +116,9 @@ def decouper_en_parties(lignes: list[str], maximum: int = PARTIE_MAX_CARACTERES)
 class Reunion:
     """Une réunion en cours de traitement (enregistrement, transcription, compte rendu)."""
 
-    def __init__(self, app: "Application", assistant: str, source: str):
+    def __init__(self, app: "Application", assistant: str, source: str, utilisateur: str = ""):
         self.app = app
+        self.utilisateur = utilisateur
         self.id = datetime.datetime.now().strftime("%Y%m%d-%H%M%S-") + secrets.token_hex(2)
         self.assistant = assistant
         self.source = source  # "enregistrement" ou le nom du fichier audio
@@ -250,7 +251,7 @@ class Reunion:
         return [f"[{horodatage(t)}] {texte}" for t, texte in sorted(self.transcription)]
 
     def _rediger(self) -> str:
-        cerveau = self.app.cerveau
+        cerveau = self.app.redacteur  # le rédacteur, s'il y en a un, écrit le compte rendu
         parties = decouper_en_parties(self.lignes())
         if len(parties) == 1:
             matiere = "TRANSCRIPTION DE LA RÉUNION :\n" + parties[0]
@@ -281,7 +282,7 @@ class Reunion:
         fichier.write_text(f"Réunion du {date} ({duree})\n\n{transcription}\n", encoding="utf-8")
 
         texte_joint, tronque = tronquer(transcription)
-        conv = self.app.conversations.creer(self.assistant)
+        conv = self.app.conversations.creer(self.assistant, self.utilisateur)
         conv.titre = f"Réunion du {self.debut:%d/%m/%Y %Hh%M}"
         message = conv.ajouter("utilisateur", f"Fais le compte rendu de la réunion du {date} (durée : {duree}).")
         message["fichiers"] = [{"nom": "Transcription de la réunion", "texte": texte_joint, "tronque": tronque}]

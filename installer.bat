@@ -63,6 +63,9 @@ set HF_HUB_DISABLE_SYMLINKS_WARNING=1
 ".venv\Scripts\python.exe" -m assistant.telecharger
 if errorlevel 1 goto erreur
 
+rem ---- Carte graphique : llama.cpp adapte, si le PC en a une ----
+".venv\Scripts\python.exe" -m assistant.materiel --installer
+
 rem ---- Raccourci "Meilleur collegue" sur le Bureau ----
 powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0assistant\raccourci.ps1"
 
