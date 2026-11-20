@@ -57,7 +57,7 @@ echo        llama.cpp : OK
 
 rem ---- 5. Le cerveau : Gemma 4 E2B (environ 3,8 Go, une seule fois) ----
 echo [5/5] Telechargement de Gemma 4 E2B (environ 3,8 Go) et de la voix (180 Mo), long la premiere fois ;
-echo        deja present si vous avez installe le directeur de memoire)...
+echo        Gemma est deja present si vous avez installe le directeur de memoire...
 set PYTHONUTF8=1
 set HF_HUB_DISABLE_SYMLINKS_WARNING=1
 ".venv\Scripts\python.exe" -m assistant.telecharger
