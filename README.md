@@ -58,19 +58,22 @@ et télécharge le cerveau lui-même, **Gemma 4 E2B** de Google (environ 3,8 Go,
 `C:\Users\VotreNom\MonAssistant\modeles`). Si vous avez déjà installé le *Directeur de
 mémoire*, Gemma 4 est réutilisé : rien n'est téléchargé une deuxième fois.
 
-## Étape 3 : la voix (facultatif, gratuit, une seule fois)
+## Étape 3 : la voix (rien à faire)
 
-Sans cette étape, l'assistant marche **à l'écrit**. Pour qu'il parle, la voix française
-(Phonon de Gradium, gratuite pour un usage personnel) demande d'accepter ses conditions sur
-le site Hugging Face :
+La voix française **Kokoro** (voix « Siwis ») est installée avec le reste : elle est libre,
+utilisable aussi en entreprise, et ne demande aucun compte.
+
+**En option, la voix Phonon** (Gradium) propose 15 voix françaises, féminines et masculines,
+mais seulement pour un **usage personnel, non commercial**, et demande un compte Hugging Face :
 
 1. Créez un compte gratuit sur [huggingface.co](https://huggingface.co/join).
 2. Ouvrez la page [huggingface.co/gradium/phonon-40m-fr](https://huggingface.co/gradium/phonon-40m-fr)
    et cliquez sur le bouton pour **accepter les conditions**.
 3. Ouvrez [huggingface.co/settings/tokens](https://huggingface.co/settings/tokens), cliquez sur
    **Create new token**, type **Read**, donnez-lui un nom, puis **copiez le jeton** (il commence par `hf_`).
-4. Ouvrez **`config.yaml`** avec le Bloc-notes et collez votre jeton entre les apostrophes :
-   `jeton_huggingface: 'hf_...'`. Enregistrez.
+4. Ouvrez **`config.yaml`** avec le Bloc-notes, collez votre jeton entre les apostrophes
+   (`jeton_huggingface: 'hf_...'`) et choisissez Phonon dans la partie `voix:` (`moteur: 'phonon'`).
+   Enregistrez et relancez. Avec Phonon, la voix se choisit pour chaque assistant, dans la page.
 
 ## Étape 4 : lancer
 
@@ -209,7 +212,7 @@ donnez le rôle dès la première phrase, et restez court.
 
 | Ce que vous voyez | Que faire |
 |---|---|
-| « La voix n'a pas pu être téléchargée » | Refaites l'étape 3 (accepter les conditions, recopier le jeton). En attendant, l'assistant marche à l'écrit. |
+| « La voix n'a pas pu être chargée » | Vérifiez votre connexion internet au premier lancement (la voix Kokoro, environ 180 Mo, se télécharge une fois), puis relancez. Avec Phonon : refaites l'étape 3. En attendant, l'assistant marche à l'écrit. |
 | « config.yaml est mal écrit » | Vérifiez les apostrophes `' '` autour des textes et les espaces en début de ligne. |
 | « llama.cpp est introuvable » | Relancez `installer.bat`, puis fermez et rouvrez `lancer.bat`. Voir aussi plus bas. |
 | « Fichier introuvable pour le modèle » | Relancez `installer.bat` : le téléchargement reprend où il s'était arrêté. |
@@ -241,11 +244,17 @@ le modèle, rangés dans `C:\Users\VotreNom\MonAssistant`, ne bougent pas.
 - **Le cerveau** : [Gemma 4 E2B](https://huggingface.co/unsloth/gemma-4-E2B-it-GGUF) de Google,
   dans [llama.cpp](https://github.com/ggml-org/llama.cpp). Il lit vos messages écrits et
   **écoute directement votre voix**, sans transcription préalable.
-- **La voix** : [Phonon](https://huggingface.co/gradium/phonon-40m-fr) de Gradium ;
+- **La voix** : [Kokoro-82M](https://huggingface.co/hexgrad/Kokoro-82M) (version ONNX), voix
+  française « Siwis » ; ou, en option, [Phonon](https://huggingface.co/gradium/phonon-40m-fr) de Gradium ;
   **le détecteur de parole** : Silero, qui repère la fin de vos phrases.
 - **Pour répondre vite** (le même moteur que le *Directeur de mémoire*) : llama.cpp garde la
   conversation en mémoire d'un tour à l'autre ; à la voix, la réponse est préparée dès 0,4 s de
   silence et la voix commence dès la première virgule.
+- **Pour que la voix démarre vite** : Kokoro fabrique chaque morceau de phrase d'un coup, en un temps
+  proportionnel à sa longueur. Le premier morceau est donc court (première virgule, ou cinq mots),
+  puis les morceaux grandissent ; les débuts de réponse fréquents (« Bien sûr, », « Bonjour ! », la
+  salutation avec votre prénom…) sont préparés à l'avance et sortent aussitôt ; et llama.cpp tourne
+  avec une priorité un peu plus basse, pour que la voix passe d'abord quand les deux travaillent.
 
 ```
 config.yaml           réglages techniques (cerveau, voix, page web)
@@ -275,5 +284,8 @@ assistant/
 tests/                tests automatiques (faux cerveau, voix simulée)
 ```
 
-**Licences** : le code est libre. Phonon 40M est sous licence CC BY-NC 4.0 (usage non
-commercial) ; Gemma 4 suit les conditions d'utilisation de Google.
+**Licences et crédits** : Gemma 4 (Google) et Kokoro-82M (hexgrad) sont sous licence
+Apache 2.0. La voix française de Kokoro, « Siwis », a été entraînée sur le corpus SIWIS
+(Université d'Édimbourg, licence CC BY 4.0). Phonon 40M (Gradium, en option) est sous licence
+CC BY-NC 4.0 : usage non commercial seulement. llama.cpp, Silero, espeak-ng (via espeakng-loader)
+et les autres bibliothèques sont des logiciels libres.

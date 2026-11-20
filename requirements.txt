@@ -4,6 +4,10 @@
 faster-whisper>=1.1
 onnxruntime
 huggingface_hub
+# La voix : Kokoro (par défaut ; espeak-ng est fourni par espeakng-loader, rien à installer)…
+espeakng-loader
+phonemizer-fork
+# … ou Phonon (en option, usage non commercial)
 ptts>=0.6.0
 fastapi
 uvicorn[standard]

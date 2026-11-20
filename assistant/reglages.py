@@ -50,7 +50,9 @@ class Reglages:
     llamacpp_couches_gpu: int = 0  # 0 = tout sur le processeur
     llamacpp_port: int = 8090
     temperature: float = 0.6
-    # La voix (Phonon)
+    # La voix : « kokoro » (libre, y compris en entreprise ; par défaut) ou « phonon »
+    # (15 voix françaises, usage non commercial, compte Hugging Face nécessaire)
+    voix_moteur: str = "kokoro"
     voix_modele: str = "hf://gradium/phonon-40m-fr"
     voix_vitesse: float = 0.0
     jeton_hf: str = ""
@@ -126,6 +128,7 @@ def charger(fichier: pathlib.Path = FICHIER_CONFIG) -> Reglages:
         llamacpp_couches_gpu=val(cerveau, "couches_gpu", d.llamacpp_couches_gpu, int),
         llamacpp_port=val(cerveau, "port", d.llamacpp_port, int),
         temperature=val(cerveau, "temperature", d.temperature, float),
+        voix_moteur=str(voix.get("moteur") or d.voix_moteur).strip().lower(),
         voix_modele=val(voix, "modele", d.voix_modele, str),
         voix_vitesse=val(voix, "vitesse", 0.0, float),
         jeton_hf=str(brut.get("jeton_huggingface") or "").strip(),

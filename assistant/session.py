@@ -49,7 +49,7 @@ from .fichiers import bloc_pour_le_modele
 from .moteurs import float_vers_pcm16, pcm16_vers_float
 from .phrases import DecoupeurPhrases
 from .profils import Profil
-from .texte_voix import couper_phrases, nettoyer_pour_voix
+from .texte_voix import couper_phrases, debut_a_dire, nettoyer_pour_voix, scinder
 from .utilisateurs import Utilisateur, bloc_consignes
 
 if TYPE_CHECKING:
@@ -131,6 +131,7 @@ class Session:
         dossier = profil.dossier()
         self.documents = Documents(dossier) if dossier is not None and dossier.is_dir() else None
         self.outils = OUTILS_DOCUMENTS if self.documents is not None else None
+        self.personne = personne
         self.systeme = construire_systeme(profil, self.documents, personne)
         self.historique = historique_depuis(conv)
         self.transcriptions: set[asyncio.Task] = set()
@@ -213,7 +214,11 @@ class Session:
         return self.app.redacteur
 
     def prechauffer(self) -> None:
-        """Fait lire à l'avance les consignes (et l'historique) : la première réponse est rapide."""
+        """Fait lire à l'avance les consignes (et l'historique) : la première réponse est rapide.
+        La voix prépare aussi les salutations avec le prénom de la personne."""
+        if self.personne is not None and hasattr(self.app.voix, "preparer"):
+            p = self.personne.prenom
+            self.app.voix.preparer([f"Bonjour {p} !", f"Bonjour {p},", f"Salut {p} !", f"Salut {p},"])
         messages = [{"role": "system", "content": self.systeme}, *self.historique,
                     {"role": "user", "content": DEBUT}]
         debut = time.monotonic()
@@ -367,10 +372,14 @@ class Session:
                     tampon += m["texte"]
                     phrases, tampon = couper_phrases(tampon, etat["premier"])
                     if etat["premier"] and not phrases:
-                        # Phonon parle dès le premier morceau : on commence à la première virgule.
-                        i = tampon.find(",", 6)
-                        if i > 0:
-                            phrases, tampon = [tampon[: i + 1]], tampon[i + 1 :].lstrip()
+                        premier_morceau, tampon = debut_a_dire(tampon)  # court : voix plus tôt
+                        phrases = [premier_morceau] if premier_morceau else []
+                    # Les premiers morceaux restent courts, puis grandissent (voir texte_voix.py).
+                    decoupe = []
+                    for p in phrases:
+                        decoupe += scinder(p, etat.get("morceaux", 0) + len(decoupe))
+                    etat["morceaux"] = etat.get("morceaux", 0) + len(decoupe)
+                    phrases = decoupe
             for p in phrases:
                 if p.strip().startswith("```"):  # le code ne se lit pas à voix haute
                     etat["code"] = not etat["code"]

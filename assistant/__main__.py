@@ -83,11 +83,14 @@ def main() -> int:
 
 
 def charger_voix(reglages, log):
-    """La voix Phonon, ou None (l'assistant marche alors à l'écrit seulement)."""
-    from .moteurs import MoteurVoix
+    """La voix (Kokoro par défaut, ou Phonon), ou None : l'assistant marche alors à l'écrit."""
+    from .moteurs import MoteurKokoro, MoteurVoix
+    from .reglages import DOSSIER_DONNEES
 
     try:
-        return MoteurVoix(reglages.voix_modele, "", reglages.voix_vitesse)
+        if reglages.voix_moteur == "phonon":
+            return MoteurVoix(reglages.voix_modele, "", reglages.voix_vitesse)
+        return MoteurKokoro(DOSSIER_DONNEES / "voix" / "kokoro", reglages.voix_vitesse)
     except Exception as exc:  # noqa: BLE001
         texte = str(exc)
         if any(m in texte for m in ("401", "403", "gated", "Gated", "token", "Unauthorized", "restricted")):
@@ -122,7 +125,7 @@ def lancer_application(reglages, gestion, log) -> int:
     from .application import Application, creer_app
     from .moteurs import DetecteurSilero
 
-    log.info("Étape 2/3 : la voix (Phonon).")
+    log.info("Étape 2/3 : la voix (%s).", "Phonon" if reglages.voix_moteur == "phonon" else "Kokoro")
     voix = charger_voix(reglages, log) or SansVoix()
     # Le détecteur de parole sert à la voix et aux comptes rendus de réunion.
     try:

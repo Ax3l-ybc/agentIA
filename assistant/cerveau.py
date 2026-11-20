@@ -300,9 +300,14 @@ class ServeurLlamaCpp:
                                     "Téléchargez-le depuis la page (bouton « Cerveau ») ou relancez installer.bat.")
         self.journal.parent.mkdir(parents=True, exist_ok=True)
         self.dossier_memoire.mkdir(parents=True, exist_ok=True)
+        # Priorité un peu plus basse que la voix : quand la réponse est lue à voix haute, la voix
+        # (Kokoro) et llama.cpp se partagent le processeur ; la voix passe d'abord (premier son
+        # bien plus tôt), et llama.cpp, qui écrit plus vite qu'on ne parle, prend tout le reste.
         options = {}
         if sys.platform == "win32":
-            options["creationflags"] = subprocess.CREATE_NO_WINDOW
+            options["creationflags"] = subprocess.CREATE_NO_WINDOW | subprocess.BELOW_NORMAL_PRIORITY_CLASS
+        else:
+            options["preexec_fn"] = lambda: os.nice(10)
         log.info("Démarrage de llama.cpp pour %s : %s%s (%s)…", self.nom, self.modele.name,
                  " sur la carte graphique" if self.couches_gpu > 0 else "", executable)
         depuis = self.journal.stat().st_size if self.journal.exists() else 0

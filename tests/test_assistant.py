@@ -95,6 +95,9 @@ def faux_llamacpp(journal: list):
                 "name": "lire_document", "arguments": json.dumps({"nom": "courses"})}}]}]
         elif "lent" in dernier["content"]:
             deltas = [{"content": f"Mot {i}. "} for i in range(400)]
+        elif "sans virgule" in dernier["content"]:  # réponse sans ponctuation au début
+            deltas = [{"content": m + " "} for m in "Un tableau croisé dynamique permet de résumer vos données "
+                      "en quelques clics et de les regarder sous plusieurs angles. Voilà.".split()]
         else:
             deltas = [{"content": "Bonjour ! "}, {"content": "Voici **trois** idées :\n- une\n- deux\n"},
                       {"content": "Laquelle te tente ?"}]
@@ -802,3 +805,62 @@ def test_profils_des_personnes(environnement):
     assert Utilisateurs(env["tmp"] / "personnes").lire(sophie["id"]).role == "Cheffe comptable"
     code, _ = appel("DELETE", f"/api/utilisateurs/{marc['id']}")
     assert code == 200 and [u["prenom"] for u in appel("GET", "/api/utilisateurs")[1]] == ["Sophie"]
+
+
+# ---------------------------------------------------------------------------
+# La voix Kokoro et le découpage des réponses dites à voix haute
+# ---------------------------------------------------------------------------
+
+def test_decoupage_pour_un_premier_son_rapide():
+    from assistant.texte_voix import debut_a_dire, scinder
+
+    assert debut_a_dire("Bonjour Sophie, je suis") == ("Bonjour Sophie,", "je suis")
+    # Pas de virgule : le premier morceau part après une trentaine de caractères, entre deux mots.
+    debut, reste = debut_a_dire("Un tableau croisé dynamique permet de résumer vos données en")
+    assert debut == "Un tableau croisé dynamique" and reste == "permet de résumer vos données en"
+    assert debut_a_dire("Un tableau croisé") == (None, "Un tableau croisé")
+    # Les morceaux suivants grandissent : 45 caractères, puis 90, puis 160.
+    longue = "Trois actions sont prévues, réserver le stand avant vendredi, envoyer la maquette au graphiste, et relancer le client."
+    morceaux = scinder(longue, 1)
+    assert len(morceaux[0]) <= 45 and all(len(m) <= 90 for m in morceaux[1:])
+    assert " ".join(morceaux) == longue
+    assert scinder(longue, 3) == [longue]
+
+
+@pytest.mark.skipif(not __import__("os").environ.get("KOKORO_DOSSIER"),
+                    reason="indiquez KOKORO_DOSSIER (fichiers de Kokoro) pour tester la vraie voix")
+def test_voix_kokoro():
+    import os
+    import threading as th
+
+    from assistant.moteurs import MoteurKokoro
+
+    voix = MoteurKokoro(pathlib.Path(os.environ["KOKORO_DOSSIER"]))
+    time.sleep(12)  # les débuts de réponse fréquents se préparent en arrière-plan
+    t = time.monotonic()
+    list(voix.parler("Bien sûr,", th.Event()))
+    assert time.monotonic() - t < 0.01  # préparé au démarrage : instantané
+    t = time.monotonic()
+    audio = np.concatenate(list(voix.parler("Bonjour Sophie,", th.Event())))
+    assert 0.5 < len(audio) / 24000 < 3 and float(np.abs(audio).max()) > 0.05
+    t = time.monotonic()
+    list(voix.parler("Bonjour Sophie,", th.Event()))
+    assert time.monotonic() - t < 0.01  # début de réponse déjà dit : sorti de la mémoire
+
+
+def test_reponse_lue_sans_virgule_au_debut(environnement):
+    """Une réponse lue à voix haute dont le début n'a pas de virgule : le premier morceau part
+    entre deux mots, et la réponse se termine normalement."""
+    env = environnement
+    dits = []
+    voix = env["etat"].voix
+    parler = voix.parler
+    voix.parler = lambda texte, arret, v=None: (dits.append(texte), parler(texte, arret, v))[1]
+
+    async def actions(ws, recus, attendre):
+        await ws.send(json.dumps({"type": "texte", "contenu": "Réponds sans virgule", "lire": True}))
+        await attendre(lambda m: m.get("type") == "fin")
+
+    recus, octets = asyncio.run(discuter(env["port"], "conv-sans-virgule", "assistant-du-quotidien", actions))
+    assert octets > 0 and dits[0] == "Un tableau croisé dynamique"
+    assert " ".join(dits).replace("  ", " ").startswith("Un tableau croisé dynamique permet de résumer vos données")

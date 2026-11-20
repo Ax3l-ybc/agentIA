@@ -33,6 +33,13 @@ def main() -> int:
         hf_hub_download(repo_id=DEPOT, filename=nom, local_dir=dossier)
         print(f"  -> {cible}")
     print("Modèle prêt.")
+    # La voix Kokoro (environ 180 Mo), libre et sans compte Hugging Face.
+    from .moteurs import MoteurKokoro
+    from .reglages import DOSSIER_DONNEES
+
+    print("Téléchargement de la voix Kokoro (environ 180 Mo, une seule fois)…")
+    MoteurKokoro.telecharger(DOSSIER_DONNEES / "voix" / "kokoro")
+    print("Voix prête.")
     return 0
 
 

@@ -1,7 +1,7 @@
 ---
 nom: 'Assistant du quotidien'
 description: 'Un assistant polyvalent pour les questions de tous les jours.'
-voix: 'Hélène'
+voix: ''
 dossier_documents: ''
 ---
 Tu es mon assistant personnel, qui tourne entièrement sur mon ordinateur.

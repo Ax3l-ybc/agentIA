@@ -8,8 +8,7 @@
 #  lancer.bat. Gardez les apostrophes simples ' ' autour des textes.
 # =====================================================================
 
-# Jeton Hugging Face : nécessaire une seule fois, pour télécharger la voix (voir le README).
-# Sans jeton, l'assistant marche quand même, mais seulement à l'écrit.
+# Jeton Hugging Face : seulement pour la voix Phonon (voir le README). Inutile avec Kokoro.
 jeton_huggingface: ''
 
 # --- Le cerveau : Gemma 4, dans llama.cpp ------------------------------
@@ -21,12 +20,17 @@ cerveau:
   # Créativité des réponses : 0.3 = sobre et précis, 0.8 = plus inventif.
   temperature: 0.6
 
-# --- La voix : Phonon de Gradium ----------------------------------------
+# --- La voix ---------------------------------------------------------------
 voix:
+  # 'kokoro' : voix française libre (Siwis), utilisable aussi en entreprise. Conseillé.
+  # 'phonon' : 15 voix françaises (Gradium), usage non commercial seulement, et il faut un
+  #            compte Hugging Face et un jeton (voir le README).
+  moteur: 'kokoro'
+  # Pour Phonon :
   modele: 'hf://gradium/phonon-40m-fr'
   # Vitesse : 0 = normal, -0.2 = plus rapide, 0.2 = plus lent.
   vitesse: 0.0
-  # (Le nom de la voix se choisit pour chaque assistant, dans la page.)
+  # (Avec Phonon, le nom de la voix se choisit pour chaque assistant, dans la page.)
 
 # --- La conversation à la voix ------------------------------------------
 conversation:
