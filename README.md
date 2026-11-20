@@ -6,8 +6,8 @@ Une page comme ChatGPT ou Claude, mais **qui tourne entièrement sur votre ordin
   en français. Il peut aussi lire à voix haute ses réponses écrites.
 - **Créez vos propres assistants**, sans toucher au code : un nom, des consignes (son rôle,
   son ton, ce qu'il doit faire), une voix, et si vous voulez, un dossier de documents qu'il
-  peut consulter (vos notes, vos cours…). Quatre exemples sont fournis : *Assistant du
-  quotidien*, *Coach d'écriture*, *Professeur particulier* et *Directeur de mémoire*.
+  peut consulter (vos notes, vos cours…). Deux exemples sont fournis : *Assistant du
+  quotidien* et *Coach d'écriture*.
 - **Vos conversations sont gardées** sur votre ordinateur : vous les retrouvez dans la colonne
   de gauche, pour les reprendre plus tard.
 - **Gratuit et 100 % local** : aucun abonnement, rien n'est envoyé sur internet (la connexion
@@ -41,6 +41,10 @@ Une page comme ChatGPT ou Claude, mais **qui tourne entièrement sur votre ordin
    **Informations complémentaires**, puis sur **Exécuter quand même**.
 3. Attendez le message **« Installation terminée ! »** (10 à 30 minutes).
 
+À la fin, un raccourci **« Meilleur collègue »** est créé sur votre Bureau : c'est lui qui
+lance l'assistant. (S'il a disparu, double-cliquez sur `creer_raccourci.bat` dans le dossier
+du programme pour le recréer.)
+
 L'installation met en place Python, **llama.cpp** (le programme qui fait tourner le « cerveau »)
 et télécharge le cerveau lui-même, **Gemma 4 E2B** de Google (environ 3,8 Go, rangé dans
 `C:\Users\VotreNom\MonAssistant\modeles`). Si vous avez déjà installé le *Directeur de
@@ -62,8 +66,9 @@ le site Hugging Face :
 
 ## Étape 4 : lancer
 
-1. **Double-cliquez sur `lancer.bat`.** Une fenêtre noire s'ouvre : laissez-la ouverte tant
-   que vous utilisez l'assistant (pour arrêter, fermez-la).
+1. **Double-cliquez sur « Meilleur collègue » sur votre Bureau** (ou sur `lancer.bat` dans le
+   dossier du programme). Une fenêtre noire s'ouvre : laissez-la ouverte tant que vous
+   utilisez l'assistant (pour arrêter, fermez-la).
 2. Après une à deux minutes, la fenêtre affiche **« Prêt ! »** et la page s'ouvre dans votre
    navigateur (en général <http://127.0.0.1:8000>).
 
@@ -153,8 +158,9 @@ le modèle, rangés dans `C:\Users\VotreNom\MonAssistant`, ne bougent pas.
 ```
 config.yaml           réglages techniques (cerveau, voix, page web)
 assistants/           un fichier par assistant (nom, voix, documents, consignes)
-installer.bat         installation (Python, llama.cpp, Gemma 4)
-lancer.bat            lancement
+installer.bat         installation (Python, llama.cpp, Gemma 4, raccourci sur le Bureau)
+lancer.bat            lancement (c'est ce que lance le raccourci « Meilleur collègue »)
+creer_raccourci.bat   recrée le raccourci « Meilleur collègue » sur le Bureau
 assistant/
   __main__.py         démarrage : cerveau, voix, page web
   application.py      le serveur de la page (assistants, conversations)
@@ -162,6 +168,7 @@ assistant/
   profils.py          lecture et écriture des fichiers d'assistants
   conversations.py    l'historique des conversations
   documents.py        les documents d'un assistant (lecture seule)
+  raccourci.ps1       création du raccourci sur le Bureau
   cerveau.py          Gemma 4 dans llama.cpp
   moteurs.py          la voix (Phonon) et le détecteur de parole (Silero)
   phrases.py          découpe de votre voix en phrases

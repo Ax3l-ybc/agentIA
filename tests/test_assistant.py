@@ -179,7 +179,7 @@ def test_config_fournie_est_lisible():
 def test_assistants_fournis():
     profils = Profils(RACINE / "assistants").lister()
     noms = {p.nom for p in profils}
-    assert "Assistant du quotidien" in noms and "Coach d'écriture" in noms
+    assert noms == {"Assistant du quotidien", "Coach d'écriture"}
     assert all(p.consignes and p.description for p in profils)
 
 
@@ -367,3 +367,12 @@ def test_decoupe_des_phrases_ecrites_pour_la_voix():
     phrases, reste = couper_phrases("Voici :\n- un\n- deux, trois\nFin. Et", True)
     assert phrases == ["Voici :", "- un ", "- deux, trois ", "Fin."] and reste == "Et"
     assert nettoyer_pour_voix("**Gras** voir https://exemple.fr ok") == "Gras voir ok"
+
+
+def test_raccourci_bureau():
+    script = (RACINE / "assistant" / "raccourci.ps1").read_bytes()
+    assert script.startswith(b"\xef\xbb\xbf")  # UTF-8 avec BOM : Windows PowerShell lit bien le « è »
+    texte = script.decode("utf-8-sig")
+    assert "Meilleur collègue.lnk" in texte and "lancer.bat" in texte
+    assert (RACINE / "assistant" / "static" / "meilleur-collegue.ico").read_bytes()[:4] == b"\x00\x00\x01\x00"
+    assert "raccourci.ps1" in (RACINE / "installer.bat").read_text(encoding="utf-8")

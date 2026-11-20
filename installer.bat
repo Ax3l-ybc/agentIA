@@ -63,12 +63,16 @@ set HF_HUB_DISABLE_SYMLINKS_WARNING=1
 ".venv\Scripts\python.exe" -m assistant.telecharger
 if errorlevel 1 goto erreur
 
+rem ---- Raccourci "Meilleur collegue" sur le Bureau ----
+powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0assistant\raccourci.ps1"
+
 echo.
 echo ==========================================================
 echo    Installation terminee !
 echo    1. Pour la voix : indiquez votre jeton Hugging Face dans config.yaml
 echo       (voir le README). Sans jeton, l'assistant marche a l'ecrit.
-echo    2. Double-cliquez sur lancer.bat
+echo    2. Double-cliquez sur "Meilleur collegue" sur votre Bureau
+echo       (ou sur lancer.bat dans ce dossier).
 echo ==========================================================
 pause
 exit /b 0
